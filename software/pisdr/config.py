@@ -1,0 +1,123 @@
+"""Static configuration for PiSDR.
+
+Everything a builder is likely to change lives here: GPIO pins, tuning steps, demodulator
+bandwidths, sample rates and file locations. Runtime state (current frequency, mode, ...)
+lives in :mod:`pisdr.state`.
+"""
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+# ----------------------------------------------------------------------------- paths
+PACKAGE_DIR = Path(__file__).resolve().parent
+SOFTWARE_DIR = PACKAGE_DIR.parent
+BANDS_FILE = SOFTWARE_DIR / "config" / "bands.json"
+USER_CONFIG_DIR = Path(os.environ.get("PISDR_CONFIG_DIR", Path.home() / ".config" / "pisdr"))
+SETTINGS_FILE = USER_CONFIG_DIR / "settings.json"
+LOG_FILE = USER_CONFIG_DIR / "pisdr.log"
+RECORDINGS_DIR = Path(os.environ.get("PISDR_RECORDINGS_DIR", Path.home() / "Recordings"))
+
+# ----------------------------------------------------------------------------- screen
+SCREEN_W = 800
+SCREEN_H = 480
+
+# ----------------------------------------------------------------------------- GPIO (BCM)
+# Swap ENCODER_A_GPIO / ENCODER_B_GPIO if the knob tunes backwards.
+ENCODER_A_GPIO = 17      # EC11 module CLK, physical pin 11
+ENCODER_B_GPIO = 27      # EC11 module DT,  physical pin 13
+ENCODER_SW_GPIO = 22     # EC11 module SW,  physical pin 15
+KEY_GPIOS = (23, 24, 25, 5)   # K1..K4, physical pins 16, 18, 22, 29
+KEY_BOUNCE_S = 0.03
+KEY_HOLD_S = 0.8         # long press threshold
+
+# ----------------------------------------------------------------------------- radio
+SAMPLE_RATE = 1_920_000      # RTL-SDR sample rate; 1.92 MS/s divides cleanly to 240 k and 48 k
+IF_RATE = 240_000            # after the translating filter (SAMPLE_RATE / 8)
+AUDIO_RATE = 48_000          # IF_RATE / 5
+FREQ_MIN = 500_000           # RTL-SDR Blog V4 lower limit without direct sampling
+FREQ_MAX = 1_766_000_000
+DEFAULT_GAIN_DB = 30.0
+GAIN_MIN_DB = 0.0
+GAIN_MAX_DB = 49.6           # R828D range reported by librtlsdr
+GAIN_STEP_DB = 1.0
+SQUELCH_MIN_DB = -100.0
+SQUELCH_MAX_DB = -20.0
+SQUELCH_STEP_DB = 1.0
+VOLUME_STEP = 2              # percent per encoder detent
+FFT_SIZE = 1024
+FFT_FPS = 25
+WATERFALL_ROWS = 170
+FUNC_RETURN_S = 4.0          # knob returns to TUNE after this many idle seconds
+RTL_DEVICE_ARGS = "rtl=0"    # append ",bias=1" for the bias tee (handled in the backend)
+PPM_CORRECTION = 0           # the V4 has a 1 ppm TCXO; leave 0 unless measured
+SMETER_CAL_DB = -60.0        # added to the IF power (dBFS) to get the S-meter reading; tune by ear
+SIGNAL_POLL_MS = 100
+
+# Tuning steps cycled by the encoder push button (Hz).
+STEPS_HZ = (10, 100, 1_000, 5_000, 10_000, 12_500, 25_000, 100_000, 1_000_000)
+DEFAULT_STEP_INDEX = 2
+
+MODES = ("AM", "NFM", "WFM", "USB", "LSB", "CW")
+
+
+@dataclass(frozen=True)
+class ModeSpec:
+    name: str
+    bandwidth_hz: float      # passband width drawn on the spectrum and used by the demod
+    offset_hz: float = 0.0   # passband centre relative to the VFO (SSB/CW are one-sided)
+    has_squelch: bool = False
+
+
+MODE_SPECS = {
+    "AM": ModeSpec("AM", 8_000),
+    "NFM": ModeSpec("NFM", 12_500, has_squelch=True),
+    "WFM": ModeSpec("WFM", 180_000, has_squelch=True),
+    "USB": ModeSpec("USB", 2_400, offset_hz=+1_500),
+    "LSB": ModeSpec("LSB", 2_400, offset_hz=-1_500),
+    "CW": ModeSpec("CW", 500, offset_hz=0),
+}
+CW_PITCH_HZ = 700.0
+SSB_LOW_CUT_HZ = 300.0
+SSB_HIGH_CUT_HZ = 2_700.0
+
+KNOB_FUNCTIONS = ("TUNE", "VOLUME", "SQUELCH", "GAIN")
+
+
+@dataclass(frozen=True)
+class Band:
+    name: str
+    start_hz: int
+    stop_hz: int
+    default_hz: int
+    mode: str
+    step_hz: int
+
+    def contains(self, hz: float) -> bool:
+        return self.start_hz <= hz <= self.stop_hz
+
+
+def load_bands(path: Path = BANDS_FILE) -> list[Band]:
+    """Read the band table; fall back to a tiny built-in list if the file is missing."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        bands = [
+            Band(b["name"], int(b["start"]), int(b["stop"]), int(b["default"]), b["mode"], int(b["step"]))
+            for b in data["bands"]
+        ]
+        if bands:
+            return bands
+    except (OSError, KeyError, ValueError, TypeError):
+        pass
+    return [
+        Band("FM bcast", 87_500_000, 108_000_000, 100_100_000, "WFM", 100_000),
+        Band("2 m", 144_000_000, 148_000_000, 146_520_000, "NFM", 5_000),
+    ]
+
+
+def step_index_for(step_hz: int) -> int:
+    """Index in STEPS_HZ closest to *step_hz*."""
+    return min(range(len(STEPS_HZ)), key=lambda i: abs(STEPS_HZ[i] - step_hz))

@@ -1,0 +1,25 @@
+{
+  "_comment": "Frequencies in Hz. 'default' is where BAND jumps to; 'step' is the tuning step selected on entry. Modes: AM, NFM, WFM, USB, LSB, CW.",
+  "bands": [
+    {"name": "MW AM",       "start": 530000,     "stop": 1700000,    "default": 1000000,   "mode": "AM",  "step": 10000},
+    {"name": "160 m",       "start": 1800000,    "stop": 2000000,    "default": 1850000,   "mode": "LSB", "step": 1000},
+    {"name": "80 m",        "start": 3500000,    "stop": 4000000,    "default": 3900000,   "mode": "LSB", "step": 1000},
+    {"name": "WWV 5",       "start": 4990000,    "stop": 5010000,    "default": 5000000,   "mode": "AM",  "step": 1000},
+    {"name": "40 m",        "start": 7000000,    "stop": 7300000,    "default": 7200000,   "mode": "LSB", "step": 1000},
+    {"name": "WWV 10",      "start": 9990000,    "stop": 10010000,   "default": 10000000,  "mode": "AM",  "step": 1000},
+    {"name": "SW 31 m",     "start": 9400000,    "stop": 9900000,    "default": 9580000,   "mode": "AM",  "step": 5000},
+    {"name": "20 m",        "start": 14000000,   "stop": 14350000,   "default": 14200000,  "mode": "USB", "step": 1000},
+    {"name": "17 m",        "start": 18068000,   "stop": 18168000,   "default": 18130000,  "mode": "USB", "step": 1000},
+    {"name": "15 m",        "start": 21000000,   "stop": 21450000,   "default": 21300000,  "mode": "USB", "step": 1000},
+    {"name": "CB",          "start": 26965000,   "stop": 27405000,   "default": 27185000,  "mode": "AM",  "step": 10000},
+    {"name": "10 m",        "start": 28000000,   "stop": 29700000,   "default": 28400000,  "mode": "USB", "step": 1000},
+    {"name": "6 m",         "start": 50000000,   "stop": 54000000,   "default": 50125000,  "mode": "USB", "step": 1000},
+    {"name": "FM bcast",    "start": 87500000,   "stop": 108000000,  "default": 100100000, "mode": "WFM", "step": 100000},
+    {"name": "Airband",     "start": 118000000,  "stop": 137000000,  "default": 121500000, "mode": "AM",  "step": 25000},
+    {"name": "2 m",         "start": 144000000,  "stop": 148000000,  "default": 146520000, "mode": "NFM", "step": 5000},
+    {"name": "NOAA WX",     "start": 162400000,  "stop": 162550000,  "default": 162400000, "mode": "NFM", "step": 25000},
+    {"name": "70 cm",       "start": 420000000,  "stop": 450000000,  "default": 446000000, "mode": "NFM", "step": 12500},
+    {"name": "FRS/GMRS",    "start": 462550000,  "stop": 467725000,  "default": 462562500, "mode": "NFM", "step": 12500},
+    {"name": "ADS-B 1090",  "start": 1089000000, "stop": 1091000000, "default": 1090000000, "mode": "AM", "step": 100000}
+  ]
+}

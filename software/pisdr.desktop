@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=PiSDR
+Comment=Touch-first SDR receiver
+# @SOFTWARE_DIR@ is replaced by install.sh.
+Exec=@SOFTWARE_DIR@/pisdr-launch.sh
+Path=@SOFTWARE_DIR@
+Terminal=false
+X-GNOME-Autostart-enabled=true
+StartupNotify=false
