@@ -20,6 +20,7 @@ USER_CONFIG_DIR = Path(os.environ.get("PISDR_CONFIG_DIR", Path.home() / ".config
 SETTINGS_FILE = USER_CONFIG_DIR / "settings.json"
 MEMORIES_FILE = USER_CONFIG_DIR / "memories.json"
 LOG_FILE = USER_CONFIG_DIR / "pisdr.log"
+SPACEWX_FILE = USER_CONFIG_DIR / "spacewx.json"   # last good solar / weather data
 RECORDINGS_DIR = Path(os.environ.get("PISDR_RECORDINGS_DIR", Path.home() / "Recordings"))
 
 # ----------------------------------------------------------------------------- screen
@@ -90,6 +91,22 @@ CW_ENVELOPE_DECIM = 48       # 48 kHz / 48 = 1 kHz envelope into the Python deco
 CW_ENVELOPE_RATE = AUDIO_RATE // CW_ENVELOPE_DECIM
 CW_DECODE_BW_HZ = 200        # band-pass width around the pitch for detection
 CW_TEXT_MAX = 400            # characters kept in the decoded-text buffer
+
+# HF conditions panel (solar-terrestrial + local weather). All feeds are free, no API key.
+HF_PANEL_MODES = ("OFF", "ON", "AUTO")   # AUTO = shown while tuned below HF_AUTO_MAX_HZ
+HF_AUTO_MAX_HZ = 30_000_000
+HF_PANEL_W = 300
+SPACEWX_SOLAR_URL = "https://www.hamqsl.com/solarxml.php"            # N0NBH: SFI/A/K/bands
+SPACEWX_KP_URL = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"
+SPACEWX_GEOIP_URL = "http://ip-api.com/json/?fields=status,lat,lon,city"   # only if no wx_lat/lon
+SPACEWX_WX_URL = ("https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
+                  "&current=temperature_2m,relative_humidity_2m,weather_code,pressure_msl,"
+                  "wind_speed_10m,wind_direction_10m&temperature_unit={temp_unit}"
+                  "&wind_speed_unit={wind_unit}&timezone=auto")
+SPACEWX_PERIOD_S = {"solar": 3600, "kp": 600, "wx": 900}   # polite polling intervals
+SPACEWX_RETRY_S = 120
+SPACEWX_TIMEOUT_S = 10
+SPACEWX_USER_AGENT = "PiSDR/1.0 (+https://github.com/facecjf/PiSDR)"
 
 # Tuning steps cycled by the encoder push button (Hz).
 STEPS_HZ = (10, 100, 1_000, 5_000, 10_000, 12_500, 25_000, 100_000, 1_000_000)

@@ -5,13 +5,15 @@ import logging
 import time
 
 from .. import config
-from ..qt import Qt, QtCore, QtGui, QtWidgets
+from ..qt import Qt, QtCore, QtGui, QtWidgets, Signal
 from ..radio.backend import Backend
 from ..scan import Scanner
+from ..spacewx import SpaceWxFetcher
 from ..state import RadioState, format_step
 from . import style
 from .cw_panel import CwPanel
 from .freq_display import FreqDisplay, SMeter
+from .hf_panel import HfPanel
 from .pickers import BandPicker, Keypad, MemoriesPage, ModePicker, Page, SettingsPage
 from .softkeys import SoftKeyBar
 from .spectrum import SpectrumWaterfall
@@ -22,6 +24,29 @@ log = logging.getLogger(__name__)
 def _kv(key) -> int:
     """Integer value of a Qt key, for PyQt5 (int enums) and PyQt6 (Python enums) alike."""
     return int(getattr(key, "value", key))
+
+
+class _Chip(QtWidgets.QLabel):
+    """Tappable status chip in the top bar."""
+
+    clicked = Signal()
+
+    def __init__(self, text: str, parent=None) -> None:
+        super().__init__(text, parent)
+        self.setObjectName("chip")
+        self.setProperty("active", False)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setFixedHeight(22)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_active(self, on: bool) -> None:
+        if self.property("active") != on:
+            self.setProperty("active", on)
+            style.repolish(self)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        self.clicked.emit()
+        super().mousePressEvent(event)
 
 
 class MainPage(Page):
@@ -40,13 +65,31 @@ class MainPage(Page):
         row.addWidget(self.freq, 1)
         row.addWidget(self.smeter, 0)
         layout.addLayout(row)
+        # Below the readout: spectrum (+ CW strip) on the left, HF conditions on the right.
+        split = QtWidgets.QHBoxLayout()
+        split.setSpacing(2)
+        left = QtWidgets.QVBoxLayout()
+        left.setSpacing(2)
         self.cw_panel = CwPanel(state)
-        layout.addWidget(self.cw_panel)
+        left.addWidget(self.cw_panel)
         self.spectrum = SpectrumWaterfall(state)
-        layout.addWidget(self.spectrum, 1)
+        left.addWidget(self.spectrum, 1)
+        split.addLayout(left, 1)
+        self.hf_panel = HfPanel(state)
+        split.addWidget(self.hf_panel, 0)
+        layout.addLayout(split, 1)
 
         self.freq.step_tapped.connect(self._step_tapped)
+        state.changed.connect(self._on_changed)
+        self.update_hf_visibility()
         # Spectrum tap-to-tune is wired by MainWindow so scanning can be cancelled.
+
+    def _on_changed(self, field: str) -> None:
+        if field in ("hf_panel", "vfo_hz", "band_index"):
+            self.update_hf_visibility()
+
+    def update_hf_visibility(self) -> None:
+        self.hf_panel.setVisible(self.state.hf_panel_visible)
 
     def _step_tapped(self, hz: int) -> None:
         self.state.set_step_hz(hz)
@@ -89,10 +132,23 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
 
-        self.topbar = QtWidgets.QLabel("")
+        self.topbar = QtWidgets.QFrame()
         self.topbar.setObjectName("topbar")
         self.topbar.setFixedHeight(28)
-        self.topbar.setTextFormat(Qt.TextFormat.RichText)
+        bar = QtWidgets.QHBoxLayout(self.topbar)
+        bar.setContentsMargins(8, 0, 8, 0)
+        bar.setSpacing(10)
+        self.topbar_left = QtWidgets.QLabel("")
+        self.topbar_left.setTextFormat(Qt.TextFormat.RichText)
+        self.hf_chip = _Chip("")
+        self.hf_chip.setToolTip("HF conditions panel")
+        self.hf_chip.clicked.connect(self._hf_chip_tapped)
+        self.topbar_right = QtWidgets.QLabel("")
+        self.topbar_right.setTextFormat(Qt.TextFormat.RichText)
+        self.topbar_right.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        bar.addWidget(self.topbar_left, 1)
+        bar.addWidget(self.hf_chip, 0)
+        bar.addWidget(self.topbar_right, 0)
         layout.addWidget(self.topbar)
 
         self.stack = QtWidgets.QStackedWidget()
@@ -139,8 +195,17 @@ class MainWindow(QtWidgets.QMainWindow):
         backend.cw_text.connect(state.append_cw_text)
         self.main_page.spectrum.tuned.connect(self._spectrum_tuned)
 
+        # Solar / weather feeds for the HF conditions panel and the top-bar chip.
+        self.spacewx = SpaceWxFetcher(state, self)
+        self.spacewx.start()
+
         self.show_main()
         self._update_topbar()
+
+    def _hf_chip_tapped(self) -> None:
+        if self.stack.currentIndex() != self.PAGE_MAIN:
+            self.show_main()
+        self.state.toggle_hf_panel()
 
     def _spectrum_tuned(self, hz: float) -> None:
         if self.state.scanning:
@@ -265,7 +330,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _apply_theme(self, name: str) -> None:
         style.apply_theme(name)
         self.setStyleSheet(style.STYLESHEET)
-        for w in (self.main_page.spectrum, self.main_page.cw_panel, self.main_page.freq, self.main_page.smeter):
+        for w in (self.main_page.spectrum, self.main_page.cw_panel, self.main_page.hf_panel,
+                  self.main_page.freq, self.main_page.smeter):
             retheme = getattr(w, "retheme", None)
             if retheme:
                 retheme()
@@ -301,10 +367,15 @@ class MainWindow(QtWidgets.QMainWindow):
             parts.append(f"<span style='color:{acc}'><b>{held}:{src}</b></span>")
         knob = f"<span style='color:{acc}'><b>KNOB {s.knob_function}</b></span>"
         clock = time.strftime("%H:%M")
-        left = " &nbsp;&nbsp; ".join(parts)
-        self.topbar.setText(
-            f"<table width='100%' cellpadding='0' cellspacing='0'><tr>"
-            f"<td align='left'>{left}</td><td align='right'>{knob} &nbsp;&nbsp; {clock}</td></tr></table>")
+        self.topbar_left.setText(" &nbsp;&nbsp; ".join(parts))
+        self.topbar_right.setText(f"{knob} &nbsp;&nbsp; {clock}")
+        wx = s.space_wx
+        if wx is not None and wx.sfi is not None:
+            chip = f"\u2600 SFI {wx.sfi}  K{wx.k_index if wx.k_index is not None else '-'}"
+        else:
+            chip = "\u2600 HF"
+        self.hf_chip.setText(chip)
+        self.hf_chip.set_active(s.hf_panel_visible)
 
     # ------------------------------------------------------------------ events
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
@@ -349,6 +420,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self.scanner.stop()
+        self.spacewx.stop()
         self.state.save()
         self.backend.stop()
         super().closeEvent(event)

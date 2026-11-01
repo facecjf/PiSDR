@@ -11,7 +11,7 @@ import sys
 
 from .. import config
 from ..qt import Qt, QtWidgets, Signal
-from ..state import RadioState, format_freq, format_step
+from ..state import RadioState, format_step
 from . import style
 
 log = logging.getLogger(__name__)
@@ -267,82 +267,194 @@ class Keypad(Page):
 
 
 # --------------------------------------------------------------------------- memories
+def _mem_freq_label(hz: int) -> str:
+    """'4.625 MHz', '146.52 MHz', '462.5625 MHz' - only as many decimals as needed."""
+    mhz = hz / 1e6
+    text = f"{mhz:.6f}".rstrip("0")
+    whole, _, frac = text.partition(".")
+    min_dec = 1 if mhz >= 1000 else 2 if mhz >= 100 else 3
+    frac = frac.ljust(min_dec, "0")
+    return f"{whole}.{frac} MHz"
+
+
+class MemoryCard(QtWidgets.QFrame):
+    """One memory: name on top, frequency and mode below. Tap to select / tune."""
+
+    clicked = Signal()
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("card")
+        self.setProperty("selected", False)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(0)
+        top = QtWidgets.QHBoxLayout()
+        top.setSpacing(6)
+        self.name = QtWidgets.QLabel("")
+        self.name.setObjectName("name")
+        self.badge = QtWidgets.QLabel("")
+        self.badge.setObjectName("badge")
+        self.badge.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        top.addWidget(self.name, 1)
+        top.addWidget(self.badge, 0)
+        layout.addLayout(top)
+        self.detail = QtWidgets.QLabel("")
+        self.detail.setObjectName("detail")
+        layout.addWidget(self.detail)
+
+    def set_memory(self, name: str, detail: str, badge: str) -> None:
+        self.name.setText(name)
+        self.detail.setText(detail)
+        self.badge.setText(badge)
+
+    def set_selected(self, on: bool) -> None:
+        if self.property("selected") != on:
+            self.setProperty("selected", on)
+            for w in (self, self.name, self.detail, self.badge):
+                style.repolish(w)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class MemoriesPage(Page):
-    """Named frequency memories: save the current VFO, recall, or delete."""
+    """Paged grid of memory cards. Tap to select, tap again (or TUNE) to recall."""
+
+    COLUMNS = 3
+    ROWS = 4
+    PER_PAGE = COLUMNS * ROWS
 
     def __init__(self, state: RadioState, parent=None) -> None:
         super().__init__(parent)
         self.state = state
         self.selected = 0
+        self.page = 0
+
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setContentsMargins(8, 4, 8, 6)
         layout.setSpacing(4)
+
+        header = QtWidgets.QHBoxLayout()
+        header.setSpacing(6)
         self.title = QtWidgets.QLabel("MEMORIES")
-        self.title.setObjectName("title")
-        layout.addWidget(self.title)
-        self.empty = QtWidgets.QLabel("No saved frequencies yet.\nPress SAVE to store the current VFO.")
+        self.title.setObjectName("section")
+        header.addWidget(self.title, 1)
+        self.prev_btn = QtWidgets.QPushButton("\u25c0")
+        self.next_btn = QtWidgets.QPushButton("\u25b6")
+        self.page_lbl = QtWidgets.QLabel("")
+        self.page_lbl.setObjectName("section")
+        self.page_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_lbl.setFixedWidth(48)
+        for btn, delta in ((self.prev_btn, -1), (self.next_btn, +1)):
+            btn.setObjectName("small")
+            btn.setFixedSize(44, 26)
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn.clicked.connect(lambda _=False, d=delta: self._turn_page(d))
+        header.addWidget(self.prev_btn)
+        header.addWidget(self.page_lbl)
+        header.addWidget(self.next_btn)
+        layout.addLayout(header)
+
+        self.empty = QtWidgets.QLabel("No saved frequencies yet.\n\nPress SAVE to store the current VFO,\n"
+                                      "or load the HF presets from Settings.")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty.setObjectName("hint")
-        layout.addWidget(self.empty)
-        self.scroll = QtWidgets.QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        container = QtWidgets.QWidget()
-        self.list_layout = QtWidgets.QVBoxLayout(container)
-        self.list_layout.setSpacing(4)
-        self.list_layout.setContentsMargins(0, 0, 0, 0)
-        self.scroll.setWidget(container)
-        layout.addWidget(self.scroll, 1)
-        self.buttons: list[QtWidgets.QPushButton] = []
-        self.group = QtWidgets.QButtonGroup(self)
-        self.group.setExclusive(True)
+        layout.addWidget(self.empty, 1)
+
+        self.grid_host = QtWidgets.QWidget()
+        grid = QtWidgets.QGridLayout(self.grid_host)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(6)
+        self.cards: list[MemoryCard] = []
+        for i in range(self.PER_PAGE):
+            card = MemoryCard()
+            card.clicked.connect(lambda i=i: self._tap(i))
+            grid.addWidget(card, i // self.COLUMNS, i % self.COLUMNS)
+            self.cards.append(card)
+        for c in range(self.COLUMNS):
+            grid.setColumnStretch(c, 1)
+        for r in range(self.ROWS):
+            grid.setRowStretch(r, 1)
+        layout.addWidget(self.grid_host, 1)
         state.changed.connect(self._on_changed)
 
+    # ------------------------------------------------------------------ helpers
     def _on_changed(self, field: str) -> None:
         if field == "memories" and self.isVisible():
             self.refresh()
 
     def on_shown(self) -> None:
         self.selected = min(self.state.memory_index, max(0, len(self.state.memories) - 1))
+        self.page = self.selected // self.PER_PAGE
         self.refresh()
 
+    @property
+    def _pages(self) -> int:
+        return max(1, (len(self.state.memories) + self.PER_PAGE - 1) // self.PER_PAGE)
+
     def refresh(self) -> None:
-        for btn in self.buttons:
-            self.group.removeButton(btn)
-            btn.deleteLater()
-        self.buttons = []
         memories = self.state.memories
-        self.empty.setVisible(not memories)
-        self.scroll.setVisible(bool(memories))
-        self.title.setText(f"MEMORIES ({len(memories)})")
-        for i, mem in enumerate(memories):
-            btn = QtWidgets.QPushButton(f"{mem.name}    {format_freq(mem.vfo_hz)}  {mem.mode}")
-            btn.setCheckable(True)
-            btn.setMinimumHeight(48)
-            btn.setStyleSheet("text-align: left;")
-            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            btn.clicked.connect(lambda _=False, i=i: self._activate(i))
-            self.group.addButton(btn, i)
-            self.list_layout.addWidget(btn)
-            self.buttons.append(btn)
-        if self.buttons:
-            self.selected %= len(self.buttons)
-            self.buttons[self.selected].setChecked(True)
-            self.scroll.ensureWidgetVisible(self.buttons[self.selected], 0, 40)
+        n = len(memories)
+        self.empty.setVisible(n == 0)
+        self.grid_host.setVisible(n > 0)
+        self.title.setText(f"MEMORIES  {n}/{config.MAX_MEMORIES}")
+        if n:
+            self.selected %= n
+            self.page = min(self.page, self._pages - 1)
+            if not (self.page * self.PER_PAGE <= self.selected < (self.page + 1) * self.PER_PAGE):
+                self.page = self.selected // self.PER_PAGE
+        pages = self._pages
+        self.page_lbl.setText(f"{self.page + 1}/{pages}")
+        self.prev_btn.setVisible(pages > 1)
+        self.next_btn.setVisible(pages > 1)
+        self.page_lbl.setVisible(pages > 1)
+        start = self.page * self.PER_PAGE
+        tuned = (self.state.vfo_hz, self.state.mode)
+        for i, card in enumerate(self.cards):
+            idx = start + i
+            if idx < n:
+                mem = memories[idx]
+                badge = "\u25cf" if (mem.vfo_hz, mem.mode) == tuned else ""
+                card.set_memory(mem.name, f"{_mem_freq_label(mem.vfo_hz)}  \u00b7  {mem.mode}", badge)
+                card.set_selected(idx == self.selected)
+                card.setVisible(True)
+            else:
+                card.setVisible(False)
+
+    def _turn_page(self, delta: int) -> None:
+        if self._pages <= 1:
+            return
+        self.page = (self.page + delta) % self._pages
+        self.selected = min(self.page * self.PER_PAGE, len(self.state.memories) - 1)
+        self.refresh()
+
+    def _tap(self, card_index: int) -> None:
+        idx = self.page * self.PER_PAGE + card_index
+        if idx >= len(self.state.memories):
+            return
+        if idx == self.selected:
+            self._activate(idx)
+            return
+        self.selected = idx
+        self.refresh()
 
     def _activate(self, index: int) -> None:
         self.selected = index
         self.state.recall_memory(index)
         self.done.emit()
 
+    # ------------------------------------------------------------------ controls
     def softkey_labels(self) -> list[str]:
         return ["SAVE", "DELETE", "TUNE", "BACK"]
 
     def on_softkey(self, index: int) -> None:
         if index == 0:
-            self.state.save_current_memory()
-            self.selected = len(self.state.memories) - 1
+            if self.state.save_current_memory():
+                self.selected = len(self.state.memories) - 1
+                self.page = self.selected // self.PER_PAGE
             self.refresh()
         elif index == 1:
             if self.state.memories:
@@ -357,11 +469,10 @@ class MemoriesPage(Page):
             self.done.emit()
 
     def on_knob(self, detents: int) -> bool:
-        if not self.buttons:
-            return True
-        self.selected = (self.selected + detents) % len(self.buttons)
-        self.buttons[self.selected].setChecked(True)
-        self.scroll.ensureWidgetVisible(self.buttons[self.selected], 0, 40)
+        n = len(self.state.memories)
+        if n:
+            self.selected = (self.selected + detents) % n
+            self.refresh()
         return True
 
     def on_encoder_push(self) -> bool:
@@ -443,6 +554,7 @@ class SettingsPage(Page):
              lambda d: s.set_waterfall_speed((s.waterfall_speed + (d or 1) - 1) % 4 + 1)),
         ]
         system = [
+            ("HF conditions panel", lambda: s.hf_panel, lambda d: s.cycle_hf_panel(d or 1)),
             ("Load HF presets", lambda: "", lambda d: s.import_preset_memories() if d == 0 else None),
             ("Exit PiSDR", lambda: "", lambda d: self.quit_requested.emit() if d == 0 else None),
             ("Shut down Pi", lambda: "", lambda d: self._shutdown() if d == 0 else None),

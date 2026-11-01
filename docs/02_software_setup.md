@@ -204,6 +204,30 @@ memory scan to catch a transmission. Edit that JSON to add your own. HF needs a 
 antenna (long wire or loop) — the whip will hear almost nothing — and keep RF gain around
 20–30 dB to avoid overload from broadcasters.
 
+## 5c. HF conditions panel (solar / weather)
+
+Below 30 MHz a panel appears to the right of the spectrum with the numbers that decide
+whether HF is open: **SFI / SSN / A / K** tiles (K coloured green–amber–red), X-ray class,
+solar wind speed and Bz, geomagnetic field and noise floor, the N0NBH **band-conditions**
+table (80–40 m … 12–10 m, day and night), a 24-hour **Kp** bar strip, and the local weather
+(storms are flagged red — lightning QRN). The age of the data sits top-right; it turns
+amber with "offline" when the feeds can't be reached.
+
+The **☀ SFI 92 K3** chip in the top bar always shows the latest SFI and K. Tap it to hide
+the panel, or to pin it on while you're on VHF/UHF. Settings → SYSTEM → **HF conditions
+panel** chooses `AUTO` (default: shown below 30 MHz), `ON` or `OFF`.
+
+Data comes from `hamqsl.com` (hourly), NOAA SWPC (every 10 min) and Open-Meteo (every
+15 min) over the Pi's Wi-Fi; no API keys. The last good values are cached in
+`~/.config/pisdr/spacewx.json` so the panel is populated at boot even without a network.
+Weather location defaults to IP geolocation; to fix it, add to `settings.json`:
+
+```json
+"wx_lat": 43.04, "wx_lon": -87.91, "wx_units": "imperial"
+```
+
+(`"metric"` gives °C and km/h.)
+
 Band scan steps the current band by the tuning step and pauses when the S-meter is above
 the higher of your squelch setting and −75 dB. Memory scan walks the saved list the same
 way. Turning the knob or tapping the spectrum cancels the scan.

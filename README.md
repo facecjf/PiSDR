@@ -79,6 +79,8 @@ Full table with notes in `docs/01_hardware.md`.
 - `MEM` opens saved frequencies; long-press `MEM` starts a band (or memory) scan.
 - In `CW` mode a Morse decoder strip shows decoded text and the sender's WPM.
   While scanning the keys become `HOLD / SKIP / BAND|MEM / STOP`.
+- Below 30 MHz an **HF conditions** panel (SFI/SSN/A/K, band conditions, 24 h Kp, local
+  weather) sits beside the spectrum; the `☀ SFI K` chip in the top bar toggles it.
 - Encoder push cycles the tuning step (10 Hz ... 1 MHz). Long-press `FUNC` opens the
   two-column Settings page (radio, audio DSP, display incl. four colour themes, system).
 

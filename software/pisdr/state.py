@@ -28,7 +28,8 @@ class RadioState(QObject):
     PERSISTED = ("vfo_hz", "mode", "step_index", "volume", "squelch_db", "gain_db",
                  "agc", "bias_tee", "band_index", "fft_fps", "waterfall_speed",
                  "dsp_hpf", "dsp_hpf_hz", "dsp_lpf", "dsp_lpf_hz",
-                 "dsp_notch", "dsp_notch_hz", "dsp_nr_level", "dsp_nb_level", "theme")
+                 "dsp_notch", "dsp_notch_hz", "dsp_nr_level", "dsp_nb_level", "theme",
+                 "hf_panel", "wx_lat", "wx_lon", "wx_units")
 
     def __init__(self, bands: list[Band] | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -64,6 +65,11 @@ class RadioState(QObject):
         self.cw_text: str = ""             # decoded Morse, newest at the end
         self.cw_wpm: float = 0.0
         self.theme: str = config.DEFAULT_THEME
+        self.hf_panel: str = "AUTO"        # OFF / ON / AUTO (shown while tuned below 30 MHz)
+        self.wx_lat: float | None = None   # weather location; None = IP geolocation
+        self.wx_lon: float | None = None
+        self.wx_units: str = "imperial"    # or "metric"
+        self.space_wx = None               # spacewx.SpaceWx, set by the fetcher
         self._func_last_used = time.monotonic()
 
         self._save_timer = QTimer(self)
@@ -251,6 +257,33 @@ class RadioState(QObject):
         i = names.index(self.theme) if self.theme in names else 0
         self.set_theme(names[(i + delta) % len(names)])
 
+    # ------------------------------------------------------------------ HF conditions panel
+    @property
+    def hf_panel_visible(self) -> bool:
+        if self.hf_panel == "ON":
+            return True
+        if self.hf_panel == "AUTO":
+            return self.vfo_hz <= config.HF_AUTO_MAX_HZ
+        return False
+
+    def set_hf_panel(self, mode: str) -> None:
+        if mode in config.HF_PANEL_MODES:
+            self._set("hf_panel", mode)
+
+    def cycle_hf_panel(self, delta: int = 1) -> None:
+        modes = config.HF_PANEL_MODES
+        i = modes.index(self.hf_panel) if self.hf_panel in modes else 0
+        self.set_hf_panel(modes[(i + delta) % len(modes)])
+
+    def toggle_hf_panel(self) -> None:
+        """Top-bar tap: hide the panel if it is showing, otherwise pin it on."""
+        self.set_hf_panel("OFF" if self.hf_panel_visible else "ON")
+        self.message.emit("HF conditions " + ("hidden" if self.hf_panel == "OFF" else "shown"))
+
+    def set_space_wx(self, data) -> None:
+        self.space_wx = data
+        self.changed.emit("space_wx")
+
     # ------------------------------------------------------------------ CW decoder
     def append_cw_text(self, text: str) -> None:
         if not text:
@@ -378,6 +411,13 @@ class RadioState(QObject):
         self.dsp_nb_level = int(max(0, min(config.DSP_LEVEL_MAX, self.dsp_nb_level)))
         if self.theme not in config.THEME_NAMES:
             self.theme = config.DEFAULT_THEME
+        if self.hf_panel not in config.HF_PANEL_MODES:
+            self.hf_panel = "AUTO"
+        if self.wx_units not in ("imperial", "metric"):
+            self.wx_units = "imperial"
+        for key in ("wx_lat", "wx_lon"):
+            value = getattr(self, key)
+            setattr(self, key, float(value) if isinstance(value, (int, float)) else None)
         for key in self.PERSISTED:
             self.changed.emit(key)
 

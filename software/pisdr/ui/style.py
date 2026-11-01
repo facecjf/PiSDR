@@ -63,10 +63,25 @@ QWidget {{
     font-family: "DejaVu Sans", "Noto Sans", "Segoe UI", sans-serif;
     font-size: 15px;
 }}
-QLabel#topbar {{
+QFrame#topbar {{
     background: {PANEL};
-    padding: 0 8px;
+}}
+QFrame#topbar QLabel {{
+    background: transparent;
     font-size: 14px;
+}}
+QFrame#topbar QLabel#chip {{
+    border: 1px solid {BORDER};
+    border-radius: 4px;
+    padding: 0 7px;
+    font-size: 13px;
+    font-weight: bold;
+    color: {TEXT_DIM};
+}}
+QFrame#topbar QLabel#chip[active="true"] {{
+    background: {ACCENT};
+    border-color: {ACCENT};
+    color: {SELECT_FG};
 }}
 QPushButton {{
     background: {PANEL_HI};
@@ -169,6 +184,36 @@ QFrame#row[selected="true"] QLabel {{
 QFrame#panel {{
     background: {PANEL};
     border-radius: 6px;
+}}
+QFrame#card {{
+    background: {PANEL_HI};
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+}}
+QFrame#card QLabel {{
+    background: transparent;
+}}
+QFrame#card QLabel#name {{
+    font-size: 18px;
+    font-weight: bold;
+}}
+QFrame#card QLabel#detail {{
+    font-size: 14px;
+    color: {TEXT_DIM};
+}}
+QFrame#card QLabel#badge {{
+    font-size: 12px;
+    font-weight: bold;
+    color: {ACCENT};
+}}
+QFrame#card[selected="true"] {{
+    background: {ACCENT_2};
+    border-color: {ACCENT_2};
+}}
+QFrame#card[selected="true"] QLabel,
+QFrame#card[selected="true"] QLabel#detail,
+QFrame#card[selected="true"] QLabel#badge {{
+    color: {SELECT_FG};
 }}
 QScrollArea {{ border: none; }}
 QScrollBar:vertical {{ width: 0px; }}
