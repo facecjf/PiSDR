@@ -135,6 +135,23 @@ Without that bridge the app tries `default`, then `pipewire`, then `pulse`, then
 Force one with `PISDR_AUDIO_DEVICE=plughw:CARD=Device,DEV=0` (the card id is the short name
 in `aplay -l`). Sample rate is 48 kHz.
 
+## 5a. Memories and scanning
+
+Saved frequencies live in `~/.config/pisdr/memories.json` (created the first time you press
+SAVE on the MEMORIES page). Soft keys on the main screen:
+
+| Action | Control |
+|---|---|
+| Open memories | short press K4 (`MEM`) |
+| Save / delete / recall | soft keys on the MEMORIES page |
+| Start / stop scan | long press K4 |
+| While scanning | `HOLD`, `SKIP`, `BAND`/`MEM` (scan source), `STOP` |
+| Settings (incl. recording) | long press K3 (`FUNC`) |
+
+Band scan steps the current band by the tuning step and pauses when the S-meter is above
+the higher of your squelch setting and −75 dB. Memory scan walks the saved list the same
+way. Turning the knob or tapping the spectrum cancels the scan.
+
 ## 6. Headless CLI tune test (no UI)
 
 Useful on the bench to prove the backend and driver before worrying about the screen:

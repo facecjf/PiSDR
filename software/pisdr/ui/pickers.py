@@ -11,7 +11,7 @@ import sys
 
 from .. import config
 from ..qt import Qt, QtWidgets, Signal
-from ..state import RadioState, format_step
+from ..state import RadioState, format_freq, format_step
 
 log = logging.getLogger(__name__)
 
@@ -248,6 +248,110 @@ class Keypad(Page):
         return True
 
 
+# --------------------------------------------------------------------------- memories
+class MemoriesPage(Page):
+    """Named frequency memories: save the current VFO, recall, or delete."""
+
+    def __init__(self, state: RadioState, parent=None) -> None:
+        super().__init__(parent)
+        self.state = state
+        self.selected = 0
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(4)
+        self.title = QtWidgets.QLabel("MEMORIES")
+        self.title.setObjectName("title")
+        layout.addWidget(self.title)
+        self.empty = QtWidgets.QLabel("No saved frequencies yet.\nPress SAVE to store the current VFO.")
+        self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty.setStyleSheet("color: #8a949c; font-size: 18px;")
+        layout.addWidget(self.empty)
+        self.scroll = QtWidgets.QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        container = QtWidgets.QWidget()
+        self.list_layout = QtWidgets.QVBoxLayout(container)
+        self.list_layout.setSpacing(4)
+        self.list_layout.setContentsMargins(0, 0, 0, 0)
+        self.scroll.setWidget(container)
+        layout.addWidget(self.scroll, 1)
+        self.buttons: list[QtWidgets.QPushButton] = []
+        self.group = QtWidgets.QButtonGroup(self)
+        self.group.setExclusive(True)
+        state.changed.connect(self._on_changed)
+
+    def _on_changed(self, field: str) -> None:
+        if field == "memories" and self.isVisible():
+            self.refresh()
+
+    def on_shown(self) -> None:
+        self.selected = min(self.state.memory_index, max(0, len(self.state.memories) - 1))
+        self.refresh()
+
+    def refresh(self) -> None:
+        for btn in self.buttons:
+            self.group.removeButton(btn)
+            btn.deleteLater()
+        self.buttons = []
+        memories = self.state.memories
+        self.empty.setVisible(not memories)
+        self.scroll.setVisible(bool(memories))
+        self.title.setText(f"MEMORIES ({len(memories)})")
+        for i, mem in enumerate(memories):
+            btn = QtWidgets.QPushButton(f"{mem.name}    {format_freq(mem.vfo_hz)}  {mem.mode}")
+            btn.setCheckable(True)
+            btn.setMinimumHeight(48)
+            btn.setStyleSheet("text-align: left; font-size: 18px;")
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn.clicked.connect(lambda _=False, i=i: self._activate(i))
+            self.group.addButton(btn, i)
+            self.list_layout.addWidget(btn)
+            self.buttons.append(btn)
+        if self.buttons:
+            self.selected %= len(self.buttons)
+            self.buttons[self.selected].setChecked(True)
+            self.scroll.ensureWidgetVisible(self.buttons[self.selected], 0, 40)
+
+    def _activate(self, index: int) -> None:
+        self.selected = index
+        self.state.recall_memory(index)
+        self.done.emit()
+
+    def softkey_labels(self) -> list[str]:
+        return ["SAVE", "DELETE", "TUNE", "BACK"]
+
+    def on_softkey(self, index: int) -> None:
+        if index == 0:
+            self.state.save_current_memory()
+            self.selected = len(self.state.memories) - 1
+            self.refresh()
+        elif index == 1:
+            if self.state.memories:
+                self.state.delete_memory(self.selected)
+                self.refresh()
+        elif index == 2:
+            if self.state.memories:
+                self._activate(self.selected)
+            else:
+                self.state.message.emit("No memories")
+        else:
+            self.done.emit()
+
+    def on_knob(self, detents: int) -> bool:
+        if not self.buttons:
+            return True
+        self.selected = (self.selected + detents) % len(self.buttons)
+        self.buttons[self.selected].setChecked(True)
+        self.scroll.ensureWidgetVisible(self.buttons[self.selected], 0, 40)
+        return True
+
+    def on_encoder_push(self) -> bool:
+        if self.state.memories:
+            self._activate(self.selected)
+        return True
+
+
 # --------------------------------------------------------------------------- settings
 class SettingsPage(Page):
     """A list of rows; knob adjusts the highlighted row, CHANGE toggles/steps it."""
@@ -270,6 +374,8 @@ class SettingsPage(Page):
              lambda d: state.set_squelch(state.squelch_db + (d or 1) * config.SQUELCH_STEP_DB)),
             ("Volume", lambda: f"{state.volume} %",
              lambda d: state.set_volume(state.volume + (d or 1) * config.VOLUME_STEP)),
+            ("Audio recording", lambda: "ON" if state.recording else "OFF",
+             lambda d: state.toggle_recording()),
             ("Spectrum rate", lambda: f"{state.fft_fps} fps",
              lambda d: state.set_fft_fps(state.fft_fps + 5 * (d or 1))),
             ("Waterfall speed", lambda: f"{state.waterfall_speed} rows/frame",

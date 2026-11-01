@@ -7,10 +7,11 @@ import time
 from .. import config
 from ..qt import Qt, QtCore, QtGui, QtWidgets
 from ..radio.backend import Backend
+from ..scan import Scanner
 from ..state import RadioState, format_step
 from . import style
 from .freq_display import FreqDisplay, SMeter
-from .pickers import BandPicker, Keypad, ModePicker, Page, SettingsPage
+from .pickers import BandPicker, Keypad, MemoriesPage, ModePicker, Page, SettingsPage
 from .softkeys import SoftKeyBar
 from .spectrum import SpectrumWaterfall
 
@@ -42,7 +43,7 @@ class MainPage(Page):
         layout.addWidget(self.spectrum, 1)
 
         self.freq.step_tapped.connect(self._step_tapped)
-        self.spectrum.tuned.connect(state.set_vfo)
+        # Spectrum tap-to-tune is wired by MainWindow so scanning can be cancelled.
 
     def _step_tapped(self, hz: int) -> None:
         self.state.set_step_hz(hz)
@@ -50,22 +51,27 @@ class MainPage(Page):
         self.state.message.emit(f"Step {format_step(self.state.step_hz)}")
 
     def softkey_labels(self) -> list[str]:
+        if self.state.scanning:
+            hold = "RESUME" if self.state.scan_held else "HOLD"
+            source = "MEM" if self.state.scan_source == "band" else "BAND"
+            return [hold, "SKIP", source, "STOP"]
         fn = self.state.knob_function
         func_label = "FUNC" if fn == "TUNE" else f"FUNC:{fn[:3]}"
-        return ["BAND", "MODE", func_label, "REC" if not self.state.recording else "STOP"]
+        return ["BAND", "MODE", func_label, "MEM"]
 
     def on_softkey(self, index: int) -> None:
-        # Handled by the main window because BAND/MODE open other pages.
+        # Handled by the main window because BAND/MODE/MEM open other pages.
         pass
 
 
 class MainWindow(QtWidgets.QMainWindow):
-    PAGE_MAIN, PAGE_BAND, PAGE_MODE, PAGE_KEYPAD, PAGE_SETTINGS = range(5)
+    PAGE_MAIN, PAGE_BAND, PAGE_MODE, PAGE_KEYPAD, PAGE_SETTINGS, PAGE_MEMORIES = range(6)
 
     def __init__(self, state: RadioState, backend: Backend, windowed: bool = False) -> None:
         super().__init__()
         self.state = state
         self.backend = backend
+        self.scanner = Scanner(state, self)
         self.setWindowTitle("PiSDR")
         self.setStyleSheet(style.STYLESHEET)
         self.setFixedSize(config.SCREEN_W, config.SCREEN_H)
@@ -92,7 +98,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mode_page = ModePicker(state)
         self.keypad_page = Keypad(state)
         self.settings_page = SettingsPage(state)
-        for page in (self.main_page, self.band_page, self.mode_page, self.keypad_page, self.settings_page):
+        self.memories_page = MemoriesPage(state)
+        for page in (self.main_page, self.band_page, self.mode_page, self.keypad_page,
+                     self.settings_page, self.memories_page):
             self.stack.addWidget(page)
             page.done.connect(self.show_main)
         self.settings_page.quit_requested.connect(self.close)
@@ -121,17 +129,27 @@ class MainWindow(QtWidgets.QMainWindow):
         state.changed.connect(self._on_state_changed)
         state.message.connect(self.show_message)
         backend.status.connect(self.show_message)
+        self.scanner.status.connect(self.show_message)
         backend.spectrum_ready.connect(self.main_page.spectrum.push_spectrum)
         backend.center_changed.connect(self.main_page.spectrum.set_center)
+        self.main_page.spectrum.tuned.connect(self._spectrum_tuned)
 
         self.show_main()
         self._update_topbar()
+
+    def _spectrum_tuned(self, hz: float) -> None:
+        if self.state.scanning:
+            self.scanner.stop()
+            self._refresh_main_softkeys()
+        self.state.set_vfo(hz)
 
     # ------------------------------------------------------------------ pages
     def current_page(self) -> Page:
         return self.stack.currentWidget()  # type: ignore[return-value]
 
     def show_page(self, index: int) -> None:
+        if index != self.PAGE_MAIN and self.state.scanning:
+            self.scanner.stop()
         self.stack.setCurrentIndex(index)
         page = self.current_page()
         page.on_shown()
@@ -143,12 +161,27 @@ class MainWindow(QtWidgets.QMainWindow):
     def toggle_page(self, index: int) -> None:
         self.show_main() if self.stack.currentIndex() == index else self.show_page(index)
 
+    def _refresh_main_softkeys(self) -> None:
+        if self.stack.currentIndex() == self.PAGE_MAIN:
+            self.softkeys.set_labels(self.main_page.softkey_labels())
+
     # ------------------------------------------------------------------ control routing
     def key_pressed(self, index: int) -> None:
         self.softkeys.flash(index)
         if self.stack.currentIndex() != self.PAGE_MAIN:
             self.current_page().on_softkey(index)
             self.softkeys.set_labels(self.current_page().softkey_labels())
+            return
+        if self.state.scanning:
+            if index == 0:
+                self.scanner.toggle_hold()
+            elif index == 1:
+                self.scanner.skip()
+            elif index == 2:
+                self.scanner.cycle_source()
+            elif index == 3:
+                self.scanner.stop()
+            self._refresh_main_softkeys()
             return
         if index == 0:
             self.show_page(self.PAGE_BAND)
@@ -158,7 +191,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.state.cycle_knob_function()
             self.show_message(f"Knob: {self.state.knob_function}")
         elif index == 3:
-            self.state.toggle_recording()
+            self.show_page(self.PAGE_MEMORIES)
 
     def key_long_pressed(self, index: int) -> None:
         if self.stack.currentIndex() != self.PAGE_MAIN:
@@ -166,20 +199,32 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.show_main()
             return
         if index == 3:
+            # Long MEM: start/stop band scan (or memory scan if that source is selected).
+            if self.state.scanning:
+                self.scanner.stop()
+            else:
+                self.scanner.start()
+            self._refresh_main_softkeys()
+        elif index == 2:
             self.show_page(self.PAGE_SETTINGS)
         elif index == 0:
-            self.state.cycle_band()        # quick band hop without the picker
+            self.state.cycle_band()
         elif index == 1:
             self.state.cycle_mode()
-        elif index == 2:
-            self.state.set_knob_function("TUNE")
-            self.show_message("Knob: TUNE")
 
     def knob_turned(self, detents: int) -> None:
+        if self.state.scanning and self.stack.currentIndex() == self.PAGE_MAIN:
+            # Manual tune while scanning cancels the scan (same as a handheld).
+            self.scanner.stop()
+            self._refresh_main_softkeys()
         if not self.current_page().on_knob(detents):
             self.state.knob_turned(detents)
 
     def encoder_pushed(self) -> None:
+        if self.state.scanning and self.stack.currentIndex() == self.PAGE_MAIN:
+            self.scanner.toggle_hold()
+            self._refresh_main_softkeys()
+            return
         if not self.current_page().on_encoder_push():
             self.state.cycle_step()
 
@@ -203,9 +248,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._toast_timer.start(8000 if len(text) > 60 else 1800)
 
     def _on_state_changed(self, field: str) -> None:
-        if field in ("knob_function", "recording"):
-            if self.stack.currentIndex() == self.PAGE_MAIN:
-                self.softkeys.set_labels(self.main_page.softkey_labels())
+        if field in ("knob_function", "recording", "scanning", "scan_source", "memories"):
+            self._refresh_main_softkeys()
         if field != "signal_db":
             self._update_topbar()
 
@@ -225,6 +269,10 @@ class MainWindow(QtWidgets.QMainWindow):
             parts.append(f"<span style='color:{acc}'><b>BIAS</b></span>")
         if s.recording:
             parts.append(f"<span style='color:{style.REC}'><b>&#9679; REC</b></span>")
+        if s.scanning:
+            held = "HOLD" if s.scan_held else "SCAN"
+            src = "MEM" if s.scan_source == "memory" else "BAND"
+            parts.append(f"<span style='color:{acc}'><b>{held}:{src}</b></span>")
         knob = f"<span style='color:{acc}'><b>KNOB {s.knob_function}</b></span>"
         clock = time.strftime("%H:%M")
         left = " &nbsp;&nbsp; ".join(parts)
@@ -274,6 +322,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.knob_turned(1 if event.angleDelta().y() > 0 else -1)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self.scanner.stop()
         self.state.save()
         self.backend.stop()
         super().closeEvent(event)

@@ -17,6 +17,7 @@ SOFTWARE_DIR = PACKAGE_DIR.parent
 BANDS_FILE = SOFTWARE_DIR / "config" / "bands.json"
 USER_CONFIG_DIR = Path(os.environ.get("PISDR_CONFIG_DIR", Path.home() / ".config" / "pisdr"))
 SETTINGS_FILE = USER_CONFIG_DIR / "settings.json"
+MEMORIES_FILE = USER_CONFIG_DIR / "memories.json"
 LOG_FILE = USER_CONFIG_DIR / "pisdr.log"
 RECORDINGS_DIR = Path(os.environ.get("PISDR_RECORDINGS_DIR", Path.home() / "Recordings"))
 
@@ -26,8 +27,8 @@ SCREEN_H = 480
 
 # ----------------------------------------------------------------------------- GPIO (BCM)
 # Swap ENCODER_A_GPIO / ENCODER_B_GPIO if the knob tunes backwards.
-ENCODER_A_GPIO = 17      # EC11 module CLK, physical pin 11
-ENCODER_B_GPIO = 27      # EC11 module DT,  physical pin 13
+ENCODER_A_GPIO = 27      # EC11 module DT,  physical pin 13
+ENCODER_B_GPIO = 17      # EC11 module CLK, physical pin 11
 ENCODER_SW_GPIO = 22     # EC11 module SW,  physical pin 15
 KEY_GPIOS = (23, 24, 25, 5)   # K1..K4, physical pins 16, 18, 22, 29
 KEY_BOUNCE_S = 0.03
@@ -55,6 +56,14 @@ RTL_DEVICE_ARGS = "rtl=0"    # append ",bias=1" for the bias tee (handled in the
 PPM_CORRECTION = 0           # the V4 has a 1 ppm TCXO; leave 0 unless measured
 SMETER_CAL_DB = -60.0        # added to the IF power (dBFS) to get the S-meter reading; tune by ear
 SIGNAL_POLL_MS = 100
+
+# Scanning: dwell on a quiet channel, pause when S-meter rises, resume when it falls.
+SCAN_TICK_MS = 80
+SCAN_DWELL_MS = 220          # quiet time on a channel before stepping
+SCAN_HOLD_MS = 120           # signal must stay above threshold this long to pause
+SCAN_RESUME_MS = 2500        # quiet time after a hit before scanning continues
+SCAN_FLOOR_DB = -75.0        # used when squelch is fully open, so band scan still finds signals
+MAX_MEMORIES = 100
 
 # Tuning steps cycled by the encoder push button (Hz).
 STEPS_HZ = (10, 100, 1_000, 5_000, 10_000, 12_500, 25_000, 100_000, 1_000_000)

@@ -6,7 +6,8 @@ only ever sees the events on its own thread.
 
 Wiring (BCM numbers, see docs/01_hardware.md):
 
-* EC11 module CLK -> ENCODER_A_GPIO, DT -> ENCODER_B_GPIO, SW -> ENCODER_SW_GPIO,
+* EC11 module CLK/DT map to ENCODER_A_GPIO / ENCODER_B_GPIO (swap in config if direction is wrong),
+  SW -> ENCODER_SW_GPIO,
   ``+`` -> 3.3 V, GND -> GND.
 * Keys K1..K4 -> KEY_GPIOS, other side to GND.
 

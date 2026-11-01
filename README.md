@@ -74,9 +74,12 @@ Full table with notes in `docs/01_hardware.md`.
 
 - The four keys sit directly below the screen; the bar along the bottom of the screen
   labels them, so their meaning can change with context.
-- Default page: `BAND / MODE / FUNC / REC`. `FUNC` cycles what the knob controls
+- Default page: `BAND / MODE / FUNC / MEM`. `FUNC` cycles what the knob controls
   (TUNE -> VOLUME -> SQUELCH -> GAIN, returning to TUNE after a few seconds idle).
-- Encoder push cycles the tuning step (10 Hz ... 1 MHz). Long-press key 4 opens settings.
+- `MEM` opens saved frequencies; long-press `MEM` starts a band (or memory) scan.
+  While scanning the keys become `HOLD / SKIP / BAND|MEM / STOP`.
+- Encoder push cycles the tuning step (10 Hz ... 1 MHz). Long-press `FUNC` opens settings.
+  Audio recording is under Settings.
 
 ## Build order
 

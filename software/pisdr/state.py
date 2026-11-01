@@ -13,6 +13,7 @@ import time
 
 from . import config
 from .config import Band, KNOB_FUNCTIONS, MODES, STEPS_HZ
+from .memories import Memory, default_name, load_memories, save_memories
 from .qt import QObject, QTimer, Signal
 
 log = logging.getLogger(__name__)
@@ -45,6 +46,11 @@ class RadioState(QObject):
         self.fft_fps: int = config.FFT_FPS
         self.waterfall_speed: int = 1      # rows per frame
         self.signal_db: float = -120.0
+        self.memories: list[Memory] = load_memories()
+        self.memory_index: int = 0
+        self.scanning: bool = False
+        self.scan_held: bool = False
+        self.scan_source: str = "band"     # "band" or "memory"
         self._func_last_used = time.monotonic()
 
         self._save_timer = QTimer(self)
@@ -187,6 +193,59 @@ class RadioState(QObject):
 
     def set_waterfall_speed(self, rows: int) -> None:
         self._set("waterfall_speed", int(max(1, min(4, rows))))
+
+    # ------------------------------------------------------------------ memories
+    def save_current_memory(self, name: str | None = None) -> Memory | None:
+        if len(self.memories) >= config.MAX_MEMORIES:
+            self.message.emit(f"Memory full ({config.MAX_MEMORIES})")
+            return None
+        mem = Memory(
+            name=name or default_name(self.vfo_hz, self.mode),
+            vfo_hz=self.vfo_hz,
+            mode=self.mode,
+            step_hz=self.step_hz,
+        )
+        self.memories.append(mem)
+        self.memory_index = len(self.memories) - 1
+        save_memories(self.memories)
+        self.changed.emit("memories")
+        self.message.emit(f"Saved {mem.name}")
+        return mem
+
+    def delete_memory(self, index: int) -> None:
+        if not self.memories:
+            return
+        index %= len(self.memories)
+        removed = self.memories.pop(index)
+        self.memory_index = min(self.memory_index, max(0, len(self.memories) - 1))
+        save_memories(self.memories)
+        self.changed.emit("memories")
+        self.message.emit(f"Deleted {removed.name}")
+
+    def recall_memory(self, index: int) -> None:
+        if not self.memories:
+            self.message.emit("No memories")
+            return
+        index %= len(self.memories)
+        mem = self.memories[index]
+        self.memory_index = index
+        self.set_mode(mem.mode)
+        self.set_step_hz(mem.step_hz)
+        self.set_vfo(mem.vfo_hz)
+        self.message.emit(f"Memory {mem.name}")
+
+    def set_scan_flags(self, scanning: bool, held: bool = False) -> None:
+        self.scanning = scanning
+        self.scan_held = held if scanning else False
+        self.changed.emit("scanning")
+
+    def set_scan_source(self, source: str) -> None:
+        if source in ("band", "memory"):
+            self.scan_source = source
+            self.changed.emit("scan_source")
+
+    def cycle_scan_source(self) -> None:
+        self.set_scan_source("memory" if self.scan_source == "band" else "band")
 
     # ------------------------------------------------------------------ persistence
     def save(self) -> None:
