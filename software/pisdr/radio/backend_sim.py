@@ -15,6 +15,25 @@ import numpy as np
 from .. import config
 from ..qt import QTimer
 from .backend import Backend
+from .cw_decoder import MORSE_TABLE, MorseDecoder
+
+_SIM_CW_TEXT = "CQ CQ CQ DE PISDR PISDR K "
+_SIM_CW_WPM = 18
+
+
+def _sim_cw_pattern(text: str, wpm: int, rate: int) -> np.ndarray:
+    """On/off envelope for *text* at *wpm*, sampled at *rate* Hz."""
+    rev = {v: k for k, v in MORSE_TABLE.items() if len(v) == 1}
+    dit = max(1, int(round(rate * 1.2 / wpm)))
+    out: list[int] = []
+    for word in text.split(" "):
+        for ch in word:
+            for sym in rev.get(ch, ""):
+                out += [1] * (dit if sym == "." else 3 * dit)
+                out += [0] * dit
+            out += [0] * 2 * dit
+        out += [0] * 4 * dit
+    return np.array(out or [0], dtype=np.float32)
 
 
 class SimBackend(Backend):
@@ -30,6 +49,10 @@ class SimBackend(Backend):
         self._bins = np.arange(config.FFT_SIZE)
         self._t0 = time.monotonic()
         self._stations: list[tuple[float, float, float, str]] = []  # (hz, level_db, bw_hz, kind)
+        self._cw_pattern = _sim_cw_pattern(_SIM_CW_TEXT, _SIM_CW_WPM, config.CW_ENVELOPE_RATE)
+        self._cw_pos = 0
+        self._cw_last_t = time.monotonic()
+        self._cw_decoder = MorseDecoder(self.cw_text.emit)
 
     # ------------------------------------------------------------------ hooks
     def _hw_start(self) -> None:
@@ -49,6 +72,9 @@ class SimBackend(Backend):
         self._offset_hz = hz
 
     def _hw_set_mode(self, mode: str) -> None:
+        if mode == "CW" and self._mode != "CW":
+            self._cw_decoder.reset()
+            self._cw_last_t = time.monotonic()
         self._mode = mode
 
     def _hw_set_gain(self, db: float, agc: bool) -> None:
@@ -121,3 +147,19 @@ class SimBackend(Backend):
         bw = self.state.mode_spec.bandwidth_hz
         mask = np.abs(f - vfo) < bw / 2
         self.state.set_signal_db(float(spec[mask].max()) if mask.any() else floor)
+
+        if self._mode == "CW":
+            self._tick_cw()
+
+    def _tick_cw(self) -> None:
+        """Feed the decoder a slice of a looping simulated CW envelope."""
+        now = time.monotonic()
+        n = int((now - self._cw_last_t) * config.CW_ENVELOPE_RATE)
+        if n <= 0:
+            return
+        self._cw_last_t = now
+        idx = (self._cw_pos + np.arange(n)) % len(self._cw_pattern)
+        self._cw_pos = int((self._cw_pos + n) % len(self._cw_pattern))
+        env = self._cw_pattern[idx] * 0.8 + 0.05 + self._rng.normal(0.0, 0.03, n).astype(np.float32)
+        self._cw_decoder.process(np.abs(env))
+        self.state.set_cw_wpm(self._cw_decoder.wpm)

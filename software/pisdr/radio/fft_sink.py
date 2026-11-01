@@ -21,6 +21,7 @@ class FftSink(gr.sync_block):
                                in_sig=[np.complex64], out_sig=None)
         self.fft_size = fft_size
         self.callback = callback
+        self.enabled = True
         self.set_fps(fps)
         self._window = np.blackman(fft_size).astype(np.float32)
         self._window_gain = float(np.sum(self._window))
@@ -31,9 +32,16 @@ class FftSink(gr.sync_block):
     def set_fps(self, fps: int) -> None:
         self._interval = 1.0 / max(1, fps)
 
+    def set_enabled(self, on: bool) -> None:
+        self.enabled = bool(on)
+        if not self.enabled:
+            self._fill = 0
+
     def work(self, input_items, output_items) -> int:
         samples = input_items[0]
         n = len(samples)
+        if not self.enabled:
+            return n
         now = time.monotonic()
         if now >= self._next_t:
             if n >= self.fft_size:

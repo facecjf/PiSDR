@@ -1,0 +1,25 @@
+{
+  "_comment": "Well-known HF utility / numbers-station frequencies. Load via Settings > SYSTEM > Load HF presets. Schedules change; see priyom.org. Frequencies in Hz.",
+  "memories": [
+    {"name": "UVB-76 Buzzer",   "vfo_hz": 4625000,  "mode": "USB", "step_hz": 1000},
+    {"name": "The Pip",         "vfo_hz": 5448000,  "mode": "USB", "step_hz": 1000},
+    {"name": "Squeaky Wheel",   "vfo_hz": 5473000,  "mode": "USB", "step_hz": 1000},
+    {"name": "HM01 Cuba 5855",  "vfo_hz": 5855000,  "mode": "AM",  "step_hz": 1000},
+    {"name": "HM01 Cuba 11530", "vfo_hz": 11530000, "mode": "AM",  "step_hz": 1000},
+    {"name": "HM01 Cuba 11635", "vfo_hz": 11635000, "mode": "AM",  "step_hz": 1000},
+    {"name": "HM01 Cuba 9065",  "vfo_hz": 9065000,  "mode": "AM",  "step_hz": 1000},
+    {"name": "HM01 Cuba 10345", "vfo_hz": 10345000, "mode": "AM",  "step_hz": 1000},
+    {"name": "E11 Oblique",     "vfo_hz": 7600000,  "mode": "USB", "step_hz": 1000},
+    {"name": "E07 English Man", "vfo_hz": 7510000,  "mode": "USB", "step_hz": 1000},
+    {"name": "S06 Russian Man", "vfo_hz": 8130000,  "mode": "USB", "step_hz": 1000},
+    {"name": "V13 New Star",    "vfo_hz": 8300000,  "mode": "AM",  "step_hz": 1000},
+    {"name": "WWV 5 MHz",       "vfo_hz": 5000000,  "mode": "AM",  "step_hz": 1000},
+    {"name": "WWV 10 MHz",      "vfo_hz": 10000000, "mode": "AM",  "step_hz": 1000},
+    {"name": "WWV 15 MHz",      "vfo_hz": 15000000, "mode": "AM",  "step_hz": 1000},
+    {"name": "CHU 7850",        "vfo_hz": 7850000,  "mode": "USB", "step_hz": 1000},
+    {"name": "VOLMET NY 6604",  "vfo_hz": 6604000,  "mode": "USB", "step_hz": 1000},
+    {"name": "VOLMET NY 10051", "vfo_hz": 10051000, "mode": "USB", "step_hz": 1000},
+    {"name": "USCG 8764",       "vfo_hz": 8764000,  "mode": "USB", "step_hz": 1000},
+    {"name": "Shannon VOLMET",  "vfo_hz": 5505000,  "mode": "USB", "step_hz": 1000}
+  ]
+}

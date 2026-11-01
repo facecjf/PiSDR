@@ -77,9 +77,10 @@ Full table with notes in `docs/01_hardware.md`.
 - Default page: `BAND / MODE / FUNC / MEM`. `FUNC` cycles what the knob controls
   (TUNE -> VOLUME -> SQUELCH -> GAIN, returning to TUNE after a few seconds idle).
 - `MEM` opens saved frequencies; long-press `MEM` starts a band (or memory) scan.
+- In `CW` mode a Morse decoder strip shows decoded text and the sender's WPM.
   While scanning the keys become `HOLD / SKIP / BAND|MEM / STOP`.
-- Encoder push cycles the tuning step (10 Hz ... 1 MHz). Long-press `FUNC` opens settings.
-  Audio recording is under Settings.
+- Encoder push cycles the tuning step (10 Hz ... 1 MHz). Long-press `FUNC` opens the
+  two-column Settings page (radio, audio DSP, display incl. four colour themes, system).
 
 ## Build order
 

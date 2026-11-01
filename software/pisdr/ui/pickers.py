@@ -12,6 +12,7 @@ import sys
 from .. import config
 from ..qt import Qt, QtWidgets, Signal
 from ..state import RadioState, format_freq, format_step
+from . import style
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,15 @@ class Page(QtWidgets.QWidget):
 
 
 # --------------------------------------------------------------------------- grid picker
+def _band_freq_label(hz: int) -> str:
+    """Compact frequency for a band tile: '4.625 MHz', '146.52 MHz', '1090 MHz'."""
+    mhz = hz / 1e6
+    if mhz >= 1000:
+        return f"{mhz:.0f} MHz"
+    digits = 2 if mhz >= 100 else 3
+    return f"{mhz:.{digits}f}".rstrip("0").rstrip(".") + " MHz"
+
+
 class _GridPicker(Page):
     """Scrollable grid of big buttons with one highlighted selection."""
 
@@ -55,20 +65,19 @@ class _GridPicker(Page):
         self.buttons: list[QtWidgets.QPushButton] = []
         self.selected = 0
 
+        # No scroll area: tiles expand to fill the page so nothing is ever cut off.
         outer = QtWidgets.QVBoxLayout(self)
-        outer.setContentsMargins(8, 4, 8, 4)
+        outer.setContentsMargins(8, 4, 8, 6)
+        outer.setSpacing(4)
         self.title = QtWidgets.QLabel(title)
-        self.title.setObjectName("title")
+        self.title.setObjectName("section")
+        self.title.setFixedHeight(20)
         outer.addWidget(self.title)
-        self.scroll = QtWidgets.QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        container = QtWidgets.QWidget()
-        self.grid = QtWidgets.QGridLayout(container)
+        self.grid = QtWidgets.QGridLayout()
         self.grid.setSpacing(6)
-        self.scroll.setWidget(container)
-        outer.addWidget(self.scroll, 1)
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        outer.addLayout(self.grid, 1)
+        outer.setAlignment(self.grid, Qt.AlignmentFlag.AlignTop)
         self.group = QtWidgets.QButtonGroup(self)
         self.group.setExclusive(True)
 
@@ -80,13 +89,21 @@ class _GridPicker(Page):
         self.items = list(items)
         for i, text in enumerate(items):
             btn = QtWidgets.QPushButton(text)
+            btn.setObjectName("tile")
             btn.setCheckable(True)
-            btn.setMinimumHeight(60)
+            btn.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
+            btn.setMinimumHeight(44)
+            btn.setMaximumHeight(110)
             btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             btn.clicked.connect(lambda _=False, i=i: self._activate(i))
             self.group.addButton(btn, i)
             self.grid.addWidget(btn, i // self.COLUMNS, i % self.COLUMNS)
             self.buttons.append(btn)
+        for c in range(self.COLUMNS):
+            self.grid.setColumnStretch(c, 1)
+        rows = (len(items) + self.COLUMNS - 1) // self.COLUMNS
+        for r in range(rows):
+            self.grid.setRowStretch(r, 1)
         self._highlight()
 
     def _highlight(self) -> None:
@@ -94,7 +111,6 @@ class _GridPicker(Page):
             return
         self.selected %= len(self.buttons)
         self.buttons[self.selected].setChecked(True)
-        self.scroll.ensureWidgetVisible(self.buttons[self.selected], 0, 40)
 
     def _activate(self, index: int) -> None:
         self.selected = index
@@ -133,9 +149,11 @@ class _GridPicker(Page):
 
 
 class BandPicker(_GridPicker):
+    COLUMNS = 5
+
     def __init__(self, state: RadioState, parent=None) -> None:
         super().__init__(state, "BAND", parent)
-        self.set_items([f"{b.name}\n{b.default_hz / 1e6:.3f} MHz" for b in state.bands])
+        self.set_items([f"{b.name}\n{_band_freq_label(b.default_hz)}" for b in state.bands])
 
     def on_shown(self) -> None:
         self.selected = self.state.band_index
@@ -264,7 +282,7 @@ class MemoriesPage(Page):
         layout.addWidget(self.title)
         self.empty = QtWidgets.QLabel("No saved frequencies yet.\nPress SAVE to store the current VFO.")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty.setStyleSheet("color: #8a949c; font-size: 18px;")
+        self.empty.setObjectName("hint")
         layout.addWidget(self.empty)
         self.scroll = QtWidgets.QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -302,7 +320,7 @@ class MemoriesPage(Page):
             btn = QtWidgets.QPushButton(f"{mem.name}    {format_freq(mem.vfo_hz)}  {mem.mode}")
             btn.setCheckable(True)
             btn.setMinimumHeight(48)
-            btn.setStyleSheet("text-align: left; font-size: 18px;")
+            btn.setStyleSheet("text-align: left;")
             btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             btn.clicked.connect(lambda _=False, i=i: self._activate(i))
             self.group.addButton(btn, i)
@@ -353,8 +371,40 @@ class MemoriesPage(Page):
 
 
 # --------------------------------------------------------------------------- settings
+class SettingRow(QtWidgets.QFrame):
+    """One settings line: label on the left, value on the right, tap to select/activate."""
+
+    clicked = Signal()
+
+    def __init__(self, label: str, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("row")
+        self.setFixedHeight(34)
+        self.setProperty("selected", False)
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(10, 0, 10, 0)
+        layout.setSpacing(6)
+        self.label = QtWidgets.QLabel(label)
+        self.value = QtWidgets.QLabel("")
+        self.value.setObjectName("value")
+        self.value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self.label, 1)
+        layout.addWidget(self.value, 0)
+
+    def set_selected(self, on: bool) -> None:
+        if self.property("selected") != on:
+            self.setProperty("selected", on)
+            for w in (self, self.label, self.value):
+                style.repolish(w)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class SettingsPage(Page):
-    """A list of rows; knob adjusts the highlighted row, CHANGE toggles/steps it."""
+    """Two columns of grouped rows. Tap a row to select it, tap again (or CHANGE) to
+    toggle/activate; the knob steps the selected value."""
 
     quit_requested = Signal()
 
@@ -362,58 +412,118 @@ class SettingsPage(Page):
         super().__init__(parent)
         self.state = state
         self.selected = 0
-        # (label, getter, adjuster(delta)) - adjuster(0) means "activate"
-        self.rows: list[tuple[str, callable, callable]] = [
-            ("Bias tee (4.5 V on antenna)", lambda: "ON" if state.bias_tee else "OFF",
-             lambda d: state.set_bias_tee(not state.bias_tee)),
-            ("Tuner AGC", lambda: "ON" if state.agc else "OFF",
-             lambda d: state.set_agc(not state.agc)),
-            ("RF gain", lambda: f"{state.gain_db:.0f} dB",
-             lambda d: state.set_gain(state.gain_db + (d or 1) * config.GAIN_STEP_DB)),
-            ("Squelch", lambda: "open" if state.squelch_db <= config.SQUELCH_MIN_DB else f"{state.squelch_db:.0f} dB",
-             lambda d: state.set_squelch(state.squelch_db + (d or 1) * config.SQUELCH_STEP_DB)),
-            ("Volume", lambda: f"{state.volume} %",
-             lambda d: state.set_volume(state.volume + (d or 1) * config.VOLUME_STEP)),
-            ("Audio recording", lambda: "ON" if state.recording else "OFF",
-             lambda d: state.toggle_recording()),
-            ("Spectrum rate", lambda: f"{state.fft_fps} fps",
-             lambda d: state.set_fft_fps(state.fft_fps + 5 * (d or 1))),
-            ("Waterfall speed", lambda: f"{state.waterfall_speed} rows/frame",
-             lambda d: state.set_waterfall_speed((state.waterfall_speed + (d or 1) - 1) % 4 + 1)),
-            ("Exit PiSDR", lambda: "", lambda d: self.quit_requested.emit() if d == 0 else None),
-            ("Shut down Raspberry Pi", lambda: "", lambda d: self._shutdown() if d == 0 else None),
+        s = state
+        # (label, getter, adjuster(delta)); adjuster(0) means "activate / toggle".
+        radio = [
+            ("Tuner AGC", lambda: "ON" if s.agc else "OFF", lambda d: s.set_agc(not s.agc)),
+            ("RF gain", lambda: f"{s.gain_db:.0f} dB" + (" (AGC)" if s.agc else ""),
+             lambda d: s.set_gain(s.gain_db + (d or 1) * config.GAIN_STEP_DB)),
+            ("Squelch", lambda: "open" if s.squelch_db <= config.SQUELCH_MIN_DB else f"{s.squelch_db:.0f} dB",
+             lambda d: s.set_squelch(config.SQUELCH_MIN_DB if d == 0 and s.squelch_db > config.SQUELCH_MIN_DB
+                                     else s.squelch_db + (d or 30) * config.SQUELCH_STEP_DB)),
+            ("Volume", lambda: f"{s.volume} %",
+             lambda d: s.set_volume(s.volume + (d or 5) * config.VOLUME_STEP)),
+            ("Bias tee (4.5 V)", lambda: "ON" if s.bias_tee else "OFF",
+             lambda d: s.set_bias_tee(not s.bias_tee)),
+            ("Record audio", lambda: "REC" if s.recording else "OFF",
+             lambda d: s.toggle_recording()),
         ]
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(8, 2, 8, 2)
-        layout.setSpacing(3)
-        title = QtWidgets.QLabel("SETTINGS")
-        title.setObjectName("title")
-        title.setFixedHeight(24)
-        layout.addWidget(title)
-        self.buttons: list[QtWidgets.QPushButton] = []
-        self.group = QtWidgets.QButtonGroup(self)
-        for i, _ in enumerate(self.rows):
-            btn = QtWidgets.QPushButton("")
-            btn.setCheckable(True)
-            btn.setFixedHeight(36)
-            btn.setStyleSheet("text-align: left; font-size: 17px; min-height: 30px;")
-            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            btn.clicked.connect(lambda _=False, i=i: self._tap(i))
-            self.group.addButton(btn, i)
-            layout.addWidget(btn)
-            self.buttons.append(btn)
-        layout.addStretch(1)
+        dsp = [
+            ("Noise reduction", lambda: "OFF" if s.dsp_nr_level <= 0 else f"{s.dsp_nr_level}", self._adjust_nr),
+            ("Noise blanker", lambda: "OFF" if s.dsp_nb_level <= 0 else f"{s.dsp_nb_level}", self._adjust_nb),
+            ("Notch", lambda: "OFF" if not s.dsp_notch else f"{s.dsp_notch_hz} Hz", self._adjust_notch),
+            ("High-pass", lambda: "OFF" if not s.dsp_hpf else f"{s.dsp_hpf_hz} Hz", self._adjust_hpf),
+            ("Low-pass", lambda: "OFF" if not s.dsp_lpf else f"{s.dsp_lpf_hz} Hz", self._adjust_lpf),
+        ]
+        display = [
+            ("Theme", lambda: s.theme, lambda d: s.cycle_theme(d or 1)),
+            ("Spectrum rate", lambda: f"{s.fft_fps} fps",
+             lambda d: s.set_fft_fps(s.fft_fps + 5 * (d or 1))),
+            ("Waterfall speed", lambda: f"{s.waterfall_speed} row/frame",
+             lambda d: s.set_waterfall_speed((s.waterfall_speed + (d or 1) - 1) % 4 + 1)),
+        ]
+        system = [
+            ("Load HF presets", lambda: "", lambda d: s.import_preset_memories() if d == 0 else None),
+            ("Exit PiSDR", lambda: "", lambda d: self.quit_requested.emit() if d == 0 else None),
+            ("Shut down Pi", lambda: "", lambda d: self._shutdown() if d == 0 else None),
+        ]
+        # Column layout: left = RADIO + DISPLAY, right = AUDIO DSP + SYSTEM.
+        self.sections = [("RADIO", radio), ("DISPLAY", display), ("AUDIO DSP", dsp), ("SYSTEM", system)]
+        self.rows: list[tuple[str, callable, callable]] = []
+        self.widgets: list[SettingRow] = []
+
+        outer = QtWidgets.QHBoxLayout(self)
+        outer.setContentsMargins(8, 4, 8, 4)
+        outer.setSpacing(10)
+        columns = (QtWidgets.QVBoxLayout(), QtWidgets.QVBoxLayout())
+        for col in columns:
+            col.setSpacing(3)
+            col.setContentsMargins(0, 0, 0, 0)
+            outer.addLayout(col, 1)
+        for si, (title, items) in enumerate(self.sections):
+            col = columns[0] if si < 2 else columns[1]
+            head = QtWidgets.QLabel(title)
+            head.setObjectName("section")
+            head.setFixedHeight(20)
+            col.addWidget(head)
+            for label, getter, adjuster in items:
+                index = len(self.rows)
+                self.rows.append((label, getter, adjuster))
+                row = SettingRow(label)
+                row.clicked.connect(lambda i=index: self._tap(i))
+                col.addWidget(row)
+                self.widgets.append(row)
+            col.addSpacing(4)
+        for col in columns:
+            col.addStretch(1)
+        self._no_value = {i for i, (_, g, _a) in enumerate(self.rows) if g() == ""}
         state.changed.connect(lambda _f: self.refresh())
         self.refresh()
 
+    def _adjust_nr(self, d: int) -> None:
+        if d == 0:
+            self.state.set_dsp_nr_level(0 if self.state.dsp_nr_level else 5)
+        else:
+            self.state.set_dsp_nr_level(self.state.dsp_nr_level + d)
+
+    def _adjust_nb(self, d: int) -> None:
+        if d == 0:
+            self.state.set_dsp_nb_level(0 if self.state.dsp_nb_level else 5)
+        else:
+            self.state.set_dsp_nb_level(self.state.dsp_nb_level + d)
+
+    def _adjust_notch(self, d: int) -> None:
+        if d == 0:
+            self.state.toggle_dsp_notch()
+        elif self.state.dsp_notch:
+            self.state.set_dsp_notch_hz(self.state.dsp_notch_hz + d * 50)
+        else:
+            self.state.set_dsp_notch(True)
+
+    def _adjust_hpf(self, d: int) -> None:
+        if d == 0:
+            self.state.toggle_dsp_hpf()
+        elif self.state.dsp_hpf:
+            self.state.set_dsp_hpf_hz(self.state.dsp_hpf_hz + d * 25)
+        else:
+            self.state.set_dsp_hpf(True)
+
+    def _adjust_lpf(self, d: int) -> None:
+        if d == 0:
+            self.state.toggle_dsp_lpf()
+        elif self.state.dsp_lpf:
+            self.state.set_dsp_lpf_hz(self.state.dsp_lpf_hz + d * 250)
+        else:
+            self.state.set_dsp_lpf(True)
+
     def refresh(self) -> None:
-        for i, (label, getter, _) in enumerate(self.rows):
-            value = getter()
-            self.buttons[i].setText(f"{label:<32}{value:>14}" if value else label)
-        self.buttons[self.selected].setChecked(True)
+        for i, (_, getter, _a) in enumerate(self.rows):
+            self.widgets[i].value.setText(getter())
+            self.widgets[i].set_selected(i == self.selected)
 
     def _tap(self, index: int) -> None:
-        if self.selected == index:
+        if self.selected == index or index in self._no_value:
+            self.selected = index
             self.rows[index][2](0)
         self.selected = index
         self.refresh()
@@ -442,7 +552,11 @@ class SettingsPage(Page):
         self.refresh()
 
     def on_knob(self, detents: int) -> bool:
-        self.rows[self.selected][2](detents)
+        # Rows without a value (Exit / Shutdown) have nothing to step: knob moves selection.
+        if self.selected in self._no_value:
+            self.selected = (self.selected + detents) % len(self.rows)
+        else:
+            self.rows[self.selected][2](detents)
         self.refresh()
         return True
 

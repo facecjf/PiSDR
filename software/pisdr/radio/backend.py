@@ -23,6 +23,7 @@ class Backend(QObject):
     spectrum_ready = Signal(object)        # np.ndarray of dB values, length FFT_SIZE, ascending freq
     center_changed = Signal(float, float)  # (center_hz, span_hz)
     status = Signal(str)
+    cw_text = Signal(str)                  # decoded Morse characters (emitted from the radio thread)
 
     #: fraction of the span the VFO may wander from centre before the hardware retunes
     RETUNE_FRACTION = 0.42
@@ -57,6 +58,12 @@ class Backend(QObject):
         self._hw_set_squelch(s.squelch_db)
         self._hw_set_gain(s.gain_db, s.agc)
         self._hw_set_fft_fps(s.fft_fps)
+        self._hw_set_dsp()
+
+    _DSP_FIELDS = (
+        "dsp_hpf", "dsp_hpf_hz", "dsp_lpf", "dsp_lpf_hz",
+        "dsp_notch", "dsp_notch_hz", "dsp_nr_level", "dsp_nb_level",
+    )
 
     # ------------------------------------------------------------------ state glue
     def _on_state_changed(self, field: str) -> None:
@@ -80,6 +87,8 @@ class Backend(QObject):
             self._hw_set_recording(s.recording)
         elif field == "fft_fps":
             self._hw_set_fft_fps(s.fft_fps)
+        elif field in self._DSP_FIELDS:
+            self._hw_set_dsp()
 
     def vfo_offset_hz(self) -> float:
         return self.state.vfo_hz - self.center_hz
@@ -110,6 +119,12 @@ class Backend(QObject):
     def _hw_set_bias_tee(self, on: bool) -> None: ...
     def _hw_set_recording(self, on: bool) -> None: ...
     def _hw_set_fft_fps(self, fps: int) -> None: ...
+    def _hw_set_dsp(self) -> None: ...
+    def set_spectrum_enabled(self, on: bool) -> None:
+        """Pause FFT→UI work while the waterfall is not visible (saves audio CPU)."""
+        self._hw_set_spectrum_enabled(on)
+
+    def _hw_set_spectrum_enabled(self, on: bool) -> None: ...
 
     # ------------------------------------------------------------------ utilities
     @staticmethod

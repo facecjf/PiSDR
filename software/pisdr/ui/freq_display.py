@@ -130,7 +130,7 @@ class SMeter(QtWidgets.QWidget):
         margin = 10
         bar = QtCore.QRectF(margin, 26, self.width() - 2 * margin, 16)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QtGui.QColor("#0a0d10"))
+        p.setBrush(QtGui.QColor(style.METER_BG))
         p.drawRoundedRect(bar, 3, 3)
 
         def frac(db: float) -> float:

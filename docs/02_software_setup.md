@@ -135,7 +135,55 @@ Without that bridge the app tries `default`, then `pipewire`, then `pulse`, then
 Force one with `PISDR_AUDIO_DEVICE=plughw:CARD=Device,DEV=0` (the card id is the short name
 in `aplay -l`). Sample rate is 48 kHz.
 
-## 5a. Memories and scanning
+## 5. Settings page
+
+Long-press **FUNC** (K3) opens Settings: two columns of grouped rows (RADIO, DISPLAY on
+the left; AUDIO DSP, SYSTEM on the right). Tap a row to select it, tap it again or press
+**CHANGE** to toggle/activate it, and turn the knob to step its value. **UP/DOWN** move
+the selection for key-only use.
+
+**Theme** (DISPLAY) switches the whole UI live and is remembered:
+
+| Theme | Use |
+|---|---|
+| Amber | default dark, amber VFO / cyan highlights |
+| Night | red-on-black for dark rooms, preserves night vision |
+| Ice | cool blue/violet dark theme |
+| Daylight | light, high contrast for bright rooms |
+
+## 5a. Audio DSP (noise reduction / filters)
+
+Settings rows under AUDIO DSP:
+
+| Setting | What it does |
+|---|---|
+| Noise reduction | Spectral subtraction on demodulated audio (0 = off, 1–10) |
+| Noise blanker | Blanks impulse spikes in the audio after demod (0 = off, 1–10) |
+| Notch filter | Narrow audio band-reject; knob sets the notch frequency |
+| Audio high-pass | Cuts rumble / hum (on by default at 250 Hz) |
+| Audio low-pass | Cuts hiss above the cutoff |
+
+CHANGE toggles on/off (or NR/NB between off and 5). The knob adjusts level or frequency
+while a row is selected. Active NR / NB / notch show in the top status bar.
+
+The filters are cheap IIR stages running in C++. NR and NB are Python blocks and are
+only inserted into the audio path while enabled (you will hear a brief click as the
+flowgraph restarts). If audio stutters with NR/NB on while the waterfall is showing,
+lower **Spectrum rate** or turn them off; the default chain is unaffected.
+
+## 5a-ii. CW (Morse) decoder
+
+Select **CW** mode and a text strip appears under the frequency readout. Tune so the
+station's tone sits inside the passband marker (the decoder listens at the 700 Hz CW
+pitch, ±100 Hz). Decoded characters scroll in; the estimated WPM is shown at right and
+**CLEAR** empties the buffer. Unknown patterns print as `*`.
+
+Expectations: clean machine or keyer CW at 8–40 WPM decodes well; fading, QRM or sloppy
+hand-sent code produces partial copy. Decoding runs on a 1 kHz envelope produced by C++
+blocks, so it has no effect on audio quality. The simulator sends a looping `CQ` so you
+can test the display without a dongle.
+
+## 5b. Memories and scanning
 
 Saved frequencies live in `~/.config/pisdr/memories.json` (created the first time you press
 SAVE on the MEMORIES page). Soft keys on the main screen:
@@ -147,6 +195,14 @@ SAVE on the MEMORIES page). Soft keys on the main screen:
 | Start / stop scan | long press K4 |
 | While scanning | `HOLD`, `SKIP`, `BAND`/`MEM` (scan source), `STOP` |
 | Settings (incl. recording) | long press K3 (`FUNC`) |
+
+**HF utility / numbers stations.** The **HF utility** band (3–18 MHz, USB) lands on
+UVB-76 at 4625 kHz. Settings → SYSTEM → **Load HF presets** merges
+`software/config/presets_numbers_stations.json` (UVB-76, The Pip, HM01 Cuba, E11/E07/S06
+slots, WWV, CHU, VOLMET) into your memories without duplicating existing ones; then use
+memory scan to catch a transmission. Edit that JSON to add your own. HF needs a real
+antenna (long wire or loop) — the whip will hear almost nothing — and keep RF gain around
+20–30 dB to avoid overload from broadcasters.
 
 Band scan steps the current band by the tuning step and pauses when the S-meter is above
 the higher of your squelch setting and −75 dB. Memory scan walks the saved list the same

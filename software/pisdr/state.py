@@ -26,7 +26,9 @@ class RadioState(QObject):
     message = Signal(str)   # one-line status text for the UI
 
     PERSISTED = ("vfo_hz", "mode", "step_index", "volume", "squelch_db", "gain_db",
-                 "agc", "bias_tee", "band_index", "fft_fps", "waterfall_speed")
+                 "agc", "bias_tee", "band_index", "fft_fps", "waterfall_speed",
+                 "dsp_hpf", "dsp_hpf_hz", "dsp_lpf", "dsp_lpf_hz",
+                 "dsp_notch", "dsp_notch_hz", "dsp_nr_level", "dsp_nb_level", "theme")
 
     def __init__(self, bands: list[Band] | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -46,11 +48,22 @@ class RadioState(QObject):
         self.fft_fps: int = config.FFT_FPS
         self.waterfall_speed: int = 1      # rows per frame
         self.signal_db: float = -120.0
+        self.dsp_hpf: bool = True
+        self.dsp_hpf_hz: int = config.DSP_HPF_HZ_DEFAULT
+        self.dsp_lpf: bool = False
+        self.dsp_lpf_hz: int = config.DSP_LPF_HZ_DEFAULT
+        self.dsp_notch: bool = False
+        self.dsp_notch_hz: int = config.DSP_NOTCH_HZ_DEFAULT
+        self.dsp_nr_level: int = 0         # 0 = off, 1..10
+        self.dsp_nb_level: int = 0         # 0 = off, 1..10
         self.memories: list[Memory] = load_memories()
         self.memory_index: int = 0
         self.scanning: bool = False
         self.scan_held: bool = False
         self.scan_source: str = "band"     # "band" or "memory"
+        self.cw_text: str = ""             # decoded Morse, newest at the end
+        self.cw_wpm: float = 0.0
+        self.theme: str = config.DEFAULT_THEME
         self._func_last_used = time.monotonic()
 
         self._save_timer = QTimer(self)
@@ -194,6 +207,70 @@ class RadioState(QObject):
     def set_waterfall_speed(self, rows: int) -> None:
         self._set("waterfall_speed", int(max(1, min(4, rows))))
 
+    # ------------------------------------------------------------------ audio DSP
+    def set_dsp_hpf(self, on: bool) -> None:
+        self._set("dsp_hpf", bool(on))
+
+    def set_dsp_hpf_hz(self, hz: float) -> None:
+        self._set("dsp_hpf_hz", int(max(config.DSP_HPF_HZ_MIN, min(config.DSP_HPF_HZ_MAX, hz))))
+
+    def set_dsp_lpf(self, on: bool) -> None:
+        self._set("dsp_lpf", bool(on))
+
+    def set_dsp_lpf_hz(self, hz: float) -> None:
+        self._set("dsp_lpf_hz", int(max(config.DSP_LPF_HZ_MIN, min(config.DSP_LPF_HZ_MAX, hz))))
+
+    def set_dsp_notch(self, on: bool) -> None:
+        self._set("dsp_notch", bool(on))
+
+    def set_dsp_notch_hz(self, hz: float) -> None:
+        self._set("dsp_notch_hz", int(max(config.DSP_NOTCH_HZ_MIN, min(config.DSP_NOTCH_HZ_MAX, hz))))
+
+    def set_dsp_nr_level(self, level: float) -> None:
+        self._set("dsp_nr_level", int(max(0, min(config.DSP_LEVEL_MAX, level))))
+
+    def set_dsp_nb_level(self, level: float) -> None:
+        self._set("dsp_nb_level", int(max(0, min(config.DSP_LEVEL_MAX, level))))
+
+    def toggle_dsp_hpf(self) -> None:
+        self.set_dsp_hpf(not self.dsp_hpf)
+
+    def toggle_dsp_lpf(self) -> None:
+        self.set_dsp_lpf(not self.dsp_lpf)
+
+    def toggle_dsp_notch(self) -> None:
+        self.set_dsp_notch(not self.dsp_notch)
+
+    # ------------------------------------------------------------------ theme
+    def set_theme(self, name: str) -> None:
+        if name in config.THEME_NAMES:
+            self._set("theme", name)
+
+    def cycle_theme(self, delta: int = 1) -> None:
+        names = config.THEME_NAMES
+        i = names.index(self.theme) if self.theme in names else 0
+        self.set_theme(names[(i + delta) % len(names)])
+
+    # ------------------------------------------------------------------ CW decoder
+    def append_cw_text(self, text: str) -> None:
+        if not text:
+            return
+        if text == " " and (not self.cw_text or self.cw_text.endswith(" ")):
+            return
+        self.cw_text = (self.cw_text + text)[-config.CW_TEXT_MAX:]
+        self.changed.emit("cw_text")
+
+    def clear_cw_text(self) -> None:
+        if self.cw_text:
+            self.cw_text = ""
+            self.changed.emit("cw_text")
+
+    def set_cw_wpm(self, wpm: float) -> None:
+        wpm = round(float(wpm), 1)
+        if wpm != self.cw_wpm:
+            self.cw_wpm = wpm
+            self.changed.emit("cw_wpm")
+
     # ------------------------------------------------------------------ memories
     def save_current_memory(self, name: str | None = None) -> Memory | None:
         if len(self.memories) >= config.MAX_MEMORIES:
@@ -211,6 +288,26 @@ class RadioState(QObject):
         self.changed.emit("memories")
         self.message.emit(f"Saved {mem.name}")
         return mem
+
+    def import_preset_memories(self, path=None) -> int:
+        """Merge the bundled preset list into memories, skipping duplicates. Returns count added."""
+        presets = load_memories(path or config.PRESET_MEMORIES_FILE)
+        if not presets:
+            self.message.emit("No presets found")
+            return 0
+        have = {(m.vfo_hz, m.mode) for m in self.memories}
+        added = 0
+        for mem in presets:
+            if (mem.vfo_hz, mem.mode) in have or len(self.memories) >= config.MAX_MEMORIES:
+                continue
+            self.memories.append(mem)
+            have.add((mem.vfo_hz, mem.mode))
+            added += 1
+        if added:
+            save_memories(self.memories)
+            self.changed.emit("memories")
+        self.message.emit(f"Added {added} preset memories" if added else "Presets already loaded")
+        return added
 
     def delete_memory(self, index: int) -> None:
         if not self.memories:
@@ -271,6 +368,16 @@ class RadioState(QObject):
         if self.mode not in MODES:
             self.mode = MODES[0]
         self.vfo_hz = int(max(config.FREQ_MIN, min(config.FREQ_MAX, self.vfo_hz)))
+        self.dsp_hpf = bool(self.dsp_hpf)
+        self.dsp_lpf = bool(self.dsp_lpf)
+        self.dsp_notch = bool(self.dsp_notch)
+        self.dsp_hpf_hz = int(max(config.DSP_HPF_HZ_MIN, min(config.DSP_HPF_HZ_MAX, self.dsp_hpf_hz)))
+        self.dsp_lpf_hz = int(max(config.DSP_LPF_HZ_MIN, min(config.DSP_LPF_HZ_MAX, self.dsp_lpf_hz)))
+        self.dsp_notch_hz = int(max(config.DSP_NOTCH_HZ_MIN, min(config.DSP_NOTCH_HZ_MAX, self.dsp_notch_hz)))
+        self.dsp_nr_level = int(max(0, min(config.DSP_LEVEL_MAX, self.dsp_nr_level)))
+        self.dsp_nb_level = int(max(0, min(config.DSP_LEVEL_MAX, self.dsp_nb_level)))
+        if self.theme not in config.THEME_NAMES:
+            self.theme = config.DEFAULT_THEME
         for key in self.PERSISTED:
             self.changed.emit(key)
 

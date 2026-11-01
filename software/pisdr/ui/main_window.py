@@ -10,6 +10,7 @@ from ..radio.backend import Backend
 from ..scan import Scanner
 from ..state import RadioState, format_step
 from . import style
+from .cw_panel import CwPanel
 from .freq_display import FreqDisplay, SMeter
 from .pickers import BandPicker, Keypad, MemoriesPage, ModePicker, Page, SettingsPage
 from .softkeys import SoftKeyBar
@@ -39,6 +40,8 @@ class MainPage(Page):
         row.addWidget(self.freq, 1)
         row.addWidget(self.smeter, 0)
         layout.addLayout(row)
+        self.cw_panel = CwPanel(state)
+        layout.addWidget(self.cw_panel)
         self.spectrum = SpectrumWaterfall(state)
         layout.addWidget(self.spectrum, 1)
 
@@ -73,6 +76,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.backend = backend
         self.scanner = Scanner(state, self)
         self.setWindowTitle("PiSDR")
+        style.apply_theme(state.theme)
         self.setStyleSheet(style.STYLESHEET)
         self.setFixedSize(config.SCREEN_W, config.SCREEN_H)
         if not windowed:
@@ -87,7 +91,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.topbar = QtWidgets.QLabel("")
         self.topbar.setObjectName("topbar")
-        self.topbar.setFixedHeight(30)
+        self.topbar.setFixedHeight(28)
         self.topbar.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self.topbar)
 
@@ -132,6 +136,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.scanner.status.connect(self.show_message)
         backend.spectrum_ready.connect(self.main_page.spectrum.push_spectrum)
         backend.center_changed.connect(self.main_page.spectrum.set_center)
+        backend.cw_text.connect(state.append_cw_text)
         self.main_page.spectrum.tuned.connect(self._spectrum_tuned)
 
         self.show_main()
@@ -151,6 +156,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if index != self.PAGE_MAIN and self.state.scanning:
             self.scanner.stop()
         self.stack.setCurrentIndex(index)
+        # Waterfall paints compete with ALSA on the Pi; pause FFT while off the main page.
+        self.backend.set_spectrum_enabled(index == self.PAGE_MAIN)
         page = self.current_page()
         page.on_shown()
         self.softkeys.set_labels(page.softkey_labels())
@@ -250,8 +257,21 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_state_changed(self, field: str) -> None:
         if field in ("knob_function", "recording", "scanning", "scan_source", "memories"):
             self._refresh_main_softkeys()
+        if field == "theme":
+            self._apply_theme(self.state.theme)
         if field != "signal_db":
             self._update_topbar()
+
+    def _apply_theme(self, name: str) -> None:
+        style.apply_theme(name)
+        self.setStyleSheet(style.STYLESHEET)
+        for w in (self.main_page.spectrum, self.main_page.cw_panel, self.main_page.freq, self.main_page.smeter):
+            retheme = getattr(w, "retheme", None)
+            if retheme:
+                retheme()
+            else:
+                w.update()
+        self._update_topbar()
 
     def _update_topbar(self) -> None:
         s = self.state
@@ -269,6 +289,12 @@ class MainWindow(QtWidgets.QMainWindow):
             parts.append(f"<span style='color:{acc}'><b>BIAS</b></span>")
         if s.recording:
             parts.append(f"<span style='color:{style.REC}'><b>&#9679; REC</b></span>")
+        if s.dsp_nr_level > 0:
+            parts.append(f"<span style='color:{acc}'><b>NR{s.dsp_nr_level}</b></span>")
+        if s.dsp_nb_level > 0:
+            parts.append(f"<span style='color:{acc}'><b>NB{s.dsp_nb_level}</b></span>")
+        if s.dsp_notch:
+            parts.append(f"<span style='color:{acc}'><b>NCH</b></span>")
         if s.scanning:
             held = "HOLD" if s.scan_held else "SCAN"
             src = "MEM" if s.scan_source == "memory" else "BAND"

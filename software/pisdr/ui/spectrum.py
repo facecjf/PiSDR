@@ -1,4 +1,9 @@
-"""Spectrum + waterfall display built on pyqtgraph. Tap anywhere to tune there."""
+"""Spectrum + waterfall display built on pyqtgraph. Tap anywhere to tune there.
+
+Spectrum frames from the radio thread are coalesced onto a timer so the Qt event
+queue never fills with stale FFT updates (that was starving ALSA on the Pi when the
+waterfall was visible). Updates are skipped entirely while this widget is hidden.
+"""
 from __future__ import annotations
 
 import numpy as np
@@ -13,15 +18,9 @@ pg.setConfigOptions(imageAxisOrder="row-major", antialias=False, background=styl
 
 
 def _waterfall_colormap() -> pg.ColorMap:
-    pos = np.array([0.0, 0.15, 0.35, 0.55, 0.75, 1.0])
-    colors = np.array([
-        [0, 0, 20, 255],
-        [0, 0, 110, 255],
-        [0, 120, 200, 255],
-        [40, 200, 120, 255],
-        [255, 210, 0, 255],
-        [255, 255, 255, 255],
-    ], dtype=np.ubyte)
+    stops = style.WATERFALL
+    pos = np.array([p for p, _ in stops])
+    colors = np.array([[r, g, b, 255] for _, (r, g, b) in stops], dtype=np.ubyte)
     return pg.ColorMap(pos, colors)
 
 
@@ -40,10 +39,15 @@ class SpectrumWaterfall(QtWidgets.QWidget):
         self.center_hz = 0.0
         self.span_hz = float(config.SAMPLE_RATE)
         self._rows = config.WATERFALL_ROWS
-        self._wf = np.full((self._rows, config.FFT_SIZE), -120.0, dtype=np.float32)
+        # Waterfall is stored at half FFT width to cut ImageItem upload cost on the Pi.
+        self._wf_cols = config.FFT_SIZE // 2
+        self._wf = np.full((self._rows, self._wf_cols), -120.0, dtype=np.float32)
         self._lvl_min = -110.0
         self._lvl_max = -40.0
         self._avg: np.ndarray | None = None
+        self._pending: np.ndarray | None = None
+        self._frame_i = 0
+        self._x_mhz: np.ndarray | None = None
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -61,9 +65,11 @@ class SpectrumWaterfall(QtWidgets.QWidget):
         self.spec_plot.getAxis("left").setStyle(tickFont=self._small_font(), tickLength=-4)
         self.spec_plot.hideAxis("bottom")
         self.spec_curve = self.spec_plot.plot(pen=pg.mkPen(style.ACCENT_2, width=1))
-        self.spec_fill = pg.FillBetweenItem(
-            self.spec_curve, pg.PlotDataItem([0, 1], [-120, -120]), brush=pg.mkBrush(57, 192, 255, 50))
-        self.spec_plot.addItem(self.spec_fill)
+        try:
+            self.spec_curve.setDownsampling(auto=True, method="peak")
+            self.spec_curve.setClipToView(True)
+        except Exception:
+            pass
         self.passband = pg.LinearRegionItem(values=(0, 1), movable=False,
                                             brush=pg.mkBrush(255, 176, 0, 45), pen=pg.mkPen(None))
         self.spec_plot.addItem(self.passband)
@@ -93,6 +99,27 @@ class SpectrumWaterfall(QtWidgets.QWidget):
         state.changed.connect(self._on_state_changed)
         self.set_center(0.0, self.span_hz)
 
+        self._flush_timer = QtCore.QTimer(self)
+        self._flush_timer.setInterval(config.SPECTRUM_UI_MS)
+        self._flush_timer.timeout.connect(self._flush_pending)
+        self._flush_timer.start()
+        self.retheme()
+
+    def retheme(self) -> None:
+        """Re-read colours from :mod:`style` after a theme change."""
+        self.glw.setBackground(style.BG)
+        self.spec_curve.setPen(pg.mkPen(style.ACCENT_2, width=1))
+        self.vfo_line.setPen(pg.mkPen(style.ACCENT, width=2))
+        self.wf_vfo_line.setPen(pg.mkPen(style.ACCENT, width=1))
+        self.wf_img.setLookupTable(_waterfall_colormap().getLookupTable(nPts=256))
+        axis_pen = pg.mkPen(style.TEXT_DIM)
+        for plot in (self.spec_plot, self.wf_plot):
+            for name in ("left", "bottom"):
+                ax = plot.getAxis(name)
+                ax.setPen(axis_pen)
+                ax.setTextPen(axis_pen)
+        self.wf_img.setImage(self._wf, autoLevels=False, levels=(self._lvl_min, self._lvl_max))
+
     # ------------------------------------------------------------------ setup helpers
     @staticmethod
     def _small_font() -> QtGui.QFont:
@@ -120,28 +147,57 @@ class SpectrumWaterfall(QtWidgets.QWidget):
         self.wf_img.setRect(QtCore.QRectF(lo, 0, hi - lo, self._rows))
         self._wf[:] = self._lvl_min
         self._avg = None
+        self._pending = None
+        self._x_mhz = np.linspace(lo, hi, config.FFT_SIZE)
         self._update_markers()
 
     def push_spectrum(self, db: np.ndarray) -> None:
-        # Light exponential averaging for the line; raw data into the waterfall.
-        if self._avg is None or self._avg.shape != db.shape:
-            self._avg = db.astype(np.float32)
-        else:
-            self._avg = 0.6 * self._avg + 0.4 * db
-        n = len(db)
-        x = np.linspace(self.center_hz - self.span_hz / 2, self.center_hz + self.span_hz / 2, n) / 1e6
-        self.spec_curve.setData(x, self._avg)
+        """Called from the GUI thread via a queued signal; keep only the latest frame."""
+        if not self.isVisible():
+            self._pending = None
+            return
+        self._pending = db
 
-        speed = self.state.waterfall_speed
-        self._wf = np.roll(self._wf, speed, axis=0)
-        self._wf[:speed] = db
-        # Follow the noise floor slowly so colours stay meaningful.
+    def _flush_pending(self) -> None:
+        db = self._pending
+        if db is None or not self.isVisible():
+            return
+        self._pending = None
+        self._draw_frame(db)
+
+    def _draw_frame(self, db: np.ndarray) -> None:
+        if self._avg is None or self._avg.shape != db.shape:
+            self._avg = db.astype(np.float32, copy=True)
+        else:
+            self._avg *= 0.6
+            self._avg += 0.4 * db
+
+        if self._x_mhz is None or len(self._x_mhz) != len(self._avg):
+            lo = (self.center_hz - self.span_hz / 2) / 1e6
+            hi = (self.center_hz + self.span_hz / 2) / 1e6
+            self._x_mhz = np.linspace(lo, hi, len(self._avg))
+        self.spec_curve.setData(self._x_mhz, self._avg)
+
+        speed = max(1, int(self.state.waterfall_speed))
+        # Shift older rows down without allocating a full rolled copy when speed==1.
+        if speed == 1:
+            self._wf[1:] = self._wf[:-1]
+            self._wf[0] = db[::2] if len(db) == self._wf_cols * 2 else db[: self._wf_cols]
+        else:
+            self._wf[speed:] = self._wf[:-speed]
+            row = db[::2] if len(db) == self._wf_cols * 2 else db[: self._wf_cols]
+            self._wf[:speed] = row
+
         floor = float(np.percentile(db, 30))
         peak = float(np.percentile(db, 99.5))
         self._lvl_min += (floor - 4.0 - self._lvl_min) * 0.05
         self._lvl_max += (max(peak + 6.0, self._lvl_min + 35.0) - self._lvl_max) * 0.05
         self.wf_img.setImage(self._wf, autoLevels=False, levels=(self._lvl_min, self._lvl_max))
-        self.spec_plot.setYRange(self._lvl_min - 6.0, self._lvl_max + 10.0, padding=0)
+
+        self._frame_i += 1
+        # setYRange forces a relayout; do it sparingly.
+        if self._frame_i % 8 == 0:
+            self.spec_plot.setYRange(self._lvl_min - 6.0, self._lvl_max + 10.0, padding=0)
 
     # ------------------------------------------------------------------ internals
     def _on_state_changed(self, field: str) -> None:

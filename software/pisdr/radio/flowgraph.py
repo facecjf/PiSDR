@@ -8,10 +8,16 @@ Flowgraph::
                                         |
                                         +--> probe_avg_mag_sqrd -> S-meter
                                         |
-                                        +--> selector --> AM / NFM / WFM / USB / LSB / CW --> selector
-                                                                                                  |
-                                                                 volume -> audio.sink <-----------+
-                                                                        -> copy (gated) -> wavfile_sink
+                                        +--> selector --> demods --> selector
+                                                                         |
+                    volume <- [NR] <- [NB] <- audio filters (IIR, C++) <-+
+                       |-> audio.sink                                     |
+                       |-> copy (gated) -> wavfile_sink                   |
+                                                                          |
+          CW decode: xlating LPF (pitch -> DC, decim 48) -> |mag| -> CwEnvelopeSink <-+
+
+[NB]/[NR] are Python blocks and are only wired in while their level is > 0, so the default
+audio path never waits on the Python GIL (which the waterfall painter holds a lot).
 
 Run ``python3 -m pisdr.radio.flowgraph --freq 162.4e6 --mode NFM`` for a headless test.
 """
@@ -32,7 +38,9 @@ import osmosdr
 
 from .. import config
 from ..qt import QTimer
+from .audio_dsp import AudioFilters, NoiseReducer, PeakBlanker
 from .backend import Backend
+from .cw_decoder import CwEnvelopeSink
 from .demod import build_all
 from .audio_out import open_sink
 from .fft_sink import FftSink
@@ -85,6 +93,10 @@ class GnuRadioBackend(Backend):
         self.sel_in = blocks.selector(gr.sizeof_gr_complex, 0, 0)
         self.sel_out = blocks.selector(gr.sizeof_float, 0, 0)
         self.demods = build_all()
+        self.audio_filters = AudioFilters()
+        self.nb = PeakBlanker()
+        self.nr = NoiseReducer()
+        self._audio_extra: list = []     # Python blocks currently spliced between filters and volume
         self.volume = blocks.multiply_const_ff(0.5)
         self.audio_sink, self.audio_device = open_sink(config.AUDIO_RATE)
         self.rec_gate = blocks.copy(gr.sizeof_float)
@@ -104,10 +116,28 @@ class GnuRadioBackend(Backend):
         for mode, index in self._mode_index.items():
             tb.connect((self.sel_in, index), self.demods[mode])
             tb.connect(self.demods[mode], (self.sel_out, index))
-        tb.connect(self.sel_out, self.volume)
+        tb.connect(self.sel_out, self.audio_filters)
+        self._audio_extra = self._wanted_extra()
+        for a, b in zip([self.audio_filters, *self._audio_extra], [*self._audio_extra, self.volume]):
+            tb.connect(a, b)
         tb.connect(self.volume, self.audio_sink)
         tb.connect(self.volume, self.rec_gate)
         tb.connect(self.rec_gate, self.wav)
+
+        # CW decoder tap: all heavy lifting in C++, ~1 kHz envelope into Python.
+        cw_taps = firdes.low_pass(1.0, config.AUDIO_RATE, config.CW_DECODE_BW_HZ / 2, config.CW_DECODE_BW_HZ / 2)
+        self.cw_xlate = gr_filter.freq_xlating_fir_filter_fcf(
+            config.CW_ENVELOPE_DECIM, cw_taps, config.CW_PITCH_HZ, config.AUDIO_RATE)
+        self.cw_mag = blocks.complex_to_mag(1)
+        self.cw_sink = CwEnvelopeSink(self._on_cw_text)
+        tb.connect(self.sel_out, self.cw_xlate)
+        tb.connect(self.cw_xlate, self.cw_mag)
+        tb.connect(self.cw_mag, self.cw_sink)
+        self._apply_dsp(rewire=False)
+
+    def _on_cw_text(self, text: str) -> None:
+        # Radio thread -> Qt thread via queued signal.
+        self.cw_text.emit(text)
 
     def _on_fft(self, db: np.ndarray) -> None:
         # Called from the GNU Radio scheduler thread; Qt queues it to the GUI thread.
@@ -136,6 +166,7 @@ class GnuRadioBackend(Backend):
         self.sel_in.set_output_index(index)
         self.sel_out.set_input_index(index)
         self._hw_set_squelch(self.state.squelch_db)
+        self.cw_sink.set_enabled(mode == "CW")
 
     def _hw_set_volume(self, pct: int) -> None:
         self.volume.set_k((pct / 100.0) ** 2)
@@ -187,11 +218,58 @@ class GnuRadioBackend(Backend):
     def _hw_set_fft_fps(self, fps: int) -> None:
         self.fft.set_fps(fps)
 
+    def _hw_set_spectrum_enabled(self, on: bool) -> None:
+        self.fft.set_enabled(on)
+
+    def _hw_set_dsp(self) -> None:
+        self._apply_dsp()
+
+    def _wanted_extra(self) -> list:
+        extra = []
+        if self.state.dsp_nb_level > 0:
+            extra.append(self.nb)
+        if self.state.dsp_nr_level > 0:
+            extra.append(self.nr)
+        return extra
+
+    def _apply_dsp(self, rewire: bool = True) -> None:
+        s = self.state
+        self.audio_filters.apply(
+            hpf=s.dsp_hpf, hpf_hz=s.dsp_hpf_hz,
+            lpf=s.dsp_lpf, lpf_hz=s.dsp_lpf_hz,
+            notch=s.dsp_notch, notch_hz=s.dsp_notch_hz,
+        )
+        self.nb.set_level(s.dsp_nb_level)
+        self.nr.set_level(s.dsp_nr_level)
+        if rewire:
+            self._rewire_audio(self._wanted_extra())
+
+    def _rewire_audio(self, extra: list) -> None:
+        """Splice Python NB/NR blocks in or out; only restarts the graph when the set changes."""
+        if [id(b) for b in extra] == [id(b) for b in self._audio_extra]:
+            return
+        tb = self.tb
+        old = [self.audio_filters, *self._audio_extra, self.volume]
+        new = [self.audio_filters, *extra, self.volume]
+        tb.lock()
+        try:
+            for a, b in zip(old, old[1:]):
+                tb.disconnect(a, b)
+            for a, b in zip(new, new[1:]):
+                tb.connect(a, b)
+            self._audio_extra = list(extra)
+        finally:
+            tb.unlock()
+        names = [type(b).__name__ for b in extra] or ["none"]
+        log.info("audio chain python blocks: %s", ", ".join(names))
+
     # ------------------------------------------------------------------ S-meter
     def _poll_level(self) -> None:
         level = self.probe.level()
         db = 10.0 * np.log10(max(level, 1e-12)) + config.SMETER_CAL_DB
         self.state.set_signal_db(float(db))
+        if self.cw_sink.enabled:
+            self.state.set_cw_wpm(self.cw_sink.decoder.wpm)
 
 
 # --------------------------------------------------------------------------- CLI test

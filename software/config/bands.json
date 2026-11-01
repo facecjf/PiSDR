@@ -4,6 +4,7 @@
     {"name": "MW AM",       "start": 530000,     "stop": 1700000,    "default": 1000000,   "mode": "AM",  "step": 10000},
     {"name": "160 m",       "start": 1800000,    "stop": 2000000,    "default": 1850000,   "mode": "LSB", "step": 1000},
     {"name": "80 m",        "start": 3500000,    "stop": 4000000,    "default": 3900000,   "mode": "LSB", "step": 1000},
+    {"name": "HF utility",  "start": 3000000,    "stop": 18000000,   "default": 4625000,   "mode": "USB", "step": 1000},
     {"name": "WWV 5",       "start": 4990000,    "stop": 5010000,    "default": 5000000,   "mode": "AM",  "step": 1000},
     {"name": "40 m",        "start": 7000000,    "stop": 7300000,    "default": 7200000,   "mode": "LSB", "step": 1000},
     {"name": "WWV 10",      "start": 9990000,    "stop": 10010000,   "default": 10000000,  "mode": "AM",  "step": 1000},

@@ -15,6 +15,7 @@ from pathlib import Path
 PACKAGE_DIR = Path(__file__).resolve().parent
 SOFTWARE_DIR = PACKAGE_DIR.parent
 BANDS_FILE = SOFTWARE_DIR / "config" / "bands.json"
+PRESET_MEMORIES_FILE = SOFTWARE_DIR / "config" / "presets_numbers_stations.json"
 USER_CONFIG_DIR = Path(os.environ.get("PISDR_CONFIG_DIR", Path.home() / ".config" / "pisdr"))
 SETTINGS_FILE = USER_CONFIG_DIR / "settings.json"
 MEMORIES_FILE = USER_CONFIG_DIR / "memories.json"
@@ -24,6 +25,8 @@ RECORDINGS_DIR = Path(os.environ.get("PISDR_RECORDINGS_DIR", Path.home() / "Reco
 # ----------------------------------------------------------------------------- screen
 SCREEN_W = 800
 SCREEN_H = 480
+THEME_NAMES = ("Amber", "Night", "Ice", "Daylight")   # must match ui/style.py THEMES
+DEFAULT_THEME = "Amber"
 
 # ----------------------------------------------------------------------------- GPIO (BCM)
 # Swap ENCODER_A_GPIO / ENCODER_B_GPIO if the knob tunes backwards.
@@ -49,8 +52,9 @@ SQUELCH_MAX_DB = -20.0
 SQUELCH_STEP_DB = 1.0
 VOLUME_STEP = 2              # percent per encoder detent
 FFT_SIZE = 1024
-FFT_FPS = 25
+FFT_FPS = 20
 WATERFALL_ROWS = 170
+SPECTRUM_UI_MS = 50          # coalesce GUI redraws (~20 fps max), drop intermediate frames
 FUNC_RETURN_S = 4.0          # knob returns to TUNE after this many idle seconds
 RTL_DEVICE_ARGS = "rtl=0"    # append ",bias=1" for the bias tee (handled in the backend)
 PPM_CORRECTION = 0           # the V4 has a 1 ppm TCXO; leave 0 unless measured
@@ -64,6 +68,28 @@ SCAN_HOLD_MS = 120           # signal must stay above threshold this long to pau
 SCAN_RESUME_MS = 2500        # quiet time after a hit before scanning continues
 SCAN_FLOOR_DB = -75.0        # used when squelch is fully open, so band scan still finds signals
 MAX_MEMORIES = 100
+
+# Post-demod audio DSP. HPF/LPF/notch are IIR biquads (C++); NR/NB are Python blocks that
+# are only spliced into the audio path while their level is > 0.
+DSP_HPF_HZ_DEFAULT = 250
+DSP_HPF_HZ_MIN = 50
+DSP_HPF_HZ_MAX = 500
+DSP_LPF_HZ_DEFAULT = 4_000
+DSP_LPF_HZ_MIN = 1_500
+DSP_LPF_HZ_MAX = 8_000
+DSP_NOTCH_HZ_DEFAULT = 1_000
+DSP_NOTCH_HZ_MIN = 300
+DSP_NOTCH_HZ_MAX = 3_500
+DSP_NOTCH_WIDTH_HZ = 80
+DSP_LEVEL_MAX = 10
+DSP_NR_FFT = 512
+DSP_NR_HOP = 256
+
+# CW decoder: audio tone at CW_PITCH_HZ -> band-pass -> magnitude -> LPF -> decimate.
+CW_ENVELOPE_DECIM = 48       # 48 kHz / 48 = 1 kHz envelope into the Python decoder
+CW_ENVELOPE_RATE = AUDIO_RATE // CW_ENVELOPE_DECIM
+CW_DECODE_BW_HZ = 200        # band-pass width around the pitch for detection
+CW_TEXT_MAX = 400            # characters kept in the decoded-text buffer
 
 # Tuning steps cycled by the encoder push button (Hz).
 STEPS_HZ = (10, 100, 1_000, 5_000, 10_000, 12_500, 25_000, 100_000, 1_000_000)

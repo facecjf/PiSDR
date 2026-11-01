@@ -6,7 +6,12 @@ Qt from here so the binding can be swapped without touching the rest of the code
 always used in their scoped form (``Qt.AlignmentFlag.AlignCenter``) which both PyQt5 >= 5.15
 and PyQt6 accept.
 """
-from pyqtgraph.Qt import QT_LIB, QtCore, QtGui, QtWidgets  # noqa: F401
+from pyqtgraph.Qt import QtCore, QtGui, QtWidgets  # noqa: F401
+
+try:
+    from pyqtgraph.Qt import QT_LIB  # noqa: F401
+except ImportError:  # newer pyqtgraph may not export QT_LIB
+    QT_LIB = "unknown"
 
 Qt = QtCore.Qt
 # Older pyqtgraph releases (e.g. the Debian-packaged one) alias Signal but not Slot.
