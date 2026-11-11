@@ -6,6 +6,11 @@ window then re-applies the stylesheet and asks custom-painted widgets to ``rethe
 """
 from __future__ import annotations
 
+# matplotlib's "inferno": shared by the Inferno theme and the INFERNO waterfall palette.
+INFERNO_STOPS = [(0.0, (0, 0, 4)), (0.15, (31, 12, 72)), (0.3, (85, 15, 109)),
+                 (0.45, (136, 34, 106)), (0.6, (186, 54, 85)), (0.72, (227, 89, 51)),
+                 (0.85, (249, 140, 10)), (0.95, (249, 201, 50)), (1.0, (252, 255, 164))]
+
 THEMES: dict[str, dict[str, object]] = {
     "Amber": {
         "BG": "#0e1216", "PANEL": "#171d23", "PANEL_HI": "#222b34", "BORDER": "#2f3a45",
@@ -42,6 +47,24 @@ THEMES: dict[str, dict[str, object]] = {
         "SELECT_FG": "#ffffff",
         "WATERFALL": [(0.0, (250, 250, 252)), (0.25, (190, 210, 240)), (0.5, (90, 150, 220)),
                       (0.75, (230, 120, 30)), (1.0, (120, 0, 0))],
+    },
+    "Inferno": {
+        "BG": "#0b0612", "PANEL": "#150b20", "PANEL_HI": "#21102e", "BORDER": "#3e1c4d",
+        "METER_BG": "#07030c",
+        "TEXT": "#fcefd8", "TEXT_DIM": "#a8879a",
+        "ACCENT": "#f98c0a", "ACCENT_2": "#d6559c", "REC": "#ff3030", "OK": "#fcd34d",
+        "SELECT_FG": "#000000",
+        "WATERFALL": INFERNO_STOPS,
+    },
+    "Green": {
+        # Monochrome phosphor: brighter means more attention (OK < ACCENT < REC).
+        "BG": "#020a04", "PANEL": "#06140a", "PANEL_HI": "#0b2213", "BORDER": "#155c29",
+        "METER_BG": "#010603",
+        "TEXT": "#4ee877", "TEXT_DIM": "#2a8a45",
+        "ACCENT": "#8bffaa", "ACCENT_2": "#3ccf66", "REC": "#e6ffe9", "OK": "#1fb851",
+        "SELECT_FG": "#000000",
+        "WATERFALL": [(0.0, (0, 6, 2)), (0.25, (0, 50, 18)), (0.5, (10, 130, 45)),
+                      (0.75, (60, 230, 100)), (0.92, (170, 255, 190)), (1.0, (235, 255, 240))],
     },
 }
 THEME_NAMES = tuple(THEMES.keys())
@@ -130,6 +153,23 @@ QPushButton#small {{
     min-height: 30px;
     padding: 2px 8px;
 }}
+QPushButton#tab {{
+    font-size: 15px;
+    font-weight: bold;
+    min-height: 30px;
+    max-height: 30px;
+    padding: 0 6px;
+    color: {TEXT_DIM};
+}}
+QPushButton#tab:checked {{
+    background: {ACCENT};
+    border-color: {ACCENT};
+    color: {SELECT_FG};
+}}
+QLabel#info {{
+    font-size: 14px;
+    padding: 4px;
+}}
 QLabel#toast {{
     background: {ACCENT};
     color: {SELECT_FG};
@@ -178,7 +218,8 @@ QFrame#row[selected="true"] {{
     background: {ACCENT_2};
     border-color: {ACCENT_2};
 }}
-QFrame#row[selected="true"] QLabel {{
+QFrame#row[selected="true"] QLabel,
+QFrame#row[selected="true"] QLabel#value {{
     color: {SELECT_FG};
 }}
 QFrame#panel {{
@@ -217,7 +258,37 @@ QFrame#card[selected="true"] QLabel#badge {{
 }}
 QScrollArea {{ border: none; }}
 QScrollBar:vertical {{ width: 0px; }}
+QPushButton#specbtn {{
+    background: rgba(0, 0, 0, 120);
+    color: {TEXT};
+    border: 1px solid {BORDER};
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 0px;
+}}
+QPushButton#specbtn:pressed {{ background: {ACCENT_2}; color: {SELECT_FG}; }}
+QLabel#speczoom {{
+    background: rgba(0, 0, 0, 120);
+    color: {ACCENT};
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: bold;
+}}
 """
+
+# Waterfall / spectrum-fill palettes selectable in Settings (THEME uses WATERFALL above).
+PALETTES: dict[str, list] = {
+    "INFERNO": INFERNO_STOPS,
+    "CLASSIC": [(0.0, (0, 0, 0)), (0.2, (0, 0, 140)), (0.4, (0, 160, 255)),
+                (0.6, (0, 230, 80)), (0.8, (255, 230, 0)), (1.0, (255, 0, 0))],
+    "GRAY": [(0.0, (0, 0, 0)), (1.0, (255, 255, 255))],
+}
+
+
+def palette_stops(name: str) -> list:
+    """Colour stops for a waterfall palette name ("THEME" = the current theme's)."""
+    return PALETTES.get(name) or WATERFALL
 
 
 def apply_theme(name: str) -> str:

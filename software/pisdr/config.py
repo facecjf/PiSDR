@@ -19,6 +19,7 @@ PRESET_MEMORIES_FILE = SOFTWARE_DIR / "config" / "presets_numbers_stations.json"
 USER_CONFIG_DIR = Path(os.environ.get("PISDR_CONFIG_DIR", Path.home() / ".config" / "pisdr"))
 SETTINGS_FILE = USER_CONFIG_DIR / "settings.json"
 MEMORIES_FILE = USER_CONFIG_DIR / "memories.json"
+SCAN_LOG_FILE = USER_CONFIG_DIR / "scan_log.json"
 LOG_FILE = USER_CONFIG_DIR / "pisdr.log"
 SPACEWX_FILE = USER_CONFIG_DIR / "spacewx.json"   # last good solar / weather data
 RECORDINGS_DIR = Path(os.environ.get("PISDR_RECORDINGS_DIR", Path.home() / "Recordings"))
@@ -26,7 +27,7 @@ RECORDINGS_DIR = Path(os.environ.get("PISDR_RECORDINGS_DIR", Path.home() / "Reco
 # ----------------------------------------------------------------------------- screen
 SCREEN_W = 800
 SCREEN_H = 480
-THEME_NAMES = ("Amber", "Night", "Ice", "Daylight")   # must match ui/style.py THEMES
+THEME_NAMES = ("Amber", "Night", "Ice", "Daylight", "Inferno", "Green")   # must match ui/style.py THEMES
 DEFAULT_THEME = "Amber"
 
 # ----------------------------------------------------------------------------- GPIO (BCM)
@@ -58,17 +59,82 @@ WATERFALL_ROWS = 170
 SPECTRUM_UI_MS = 50          # coalesce GUI redraws (~20 fps max), drop intermediate frames
 FUNC_RETURN_S = 4.0          # knob returns to TUNE after this many idle seconds
 RTL_DEVICE_ARGS = "rtl=0"    # append ",bias=1" for the bias tee (handled in the backend)
-PPM_CORRECTION = 0           # the V4 has a 1 ppm TCXO; leave 0 unless measured
-SMETER_CAL_DB = -60.0        # added to the IF power (dBFS) to get the S-meter reading; tune by ear
+PPM_CORRECTION = 0           # default for Settings > RADIO > PPM; the V4 TCXO is ~1 ppm
+PPM_MIN, PPM_MAX = -100, 100
+SMETER_CAL_DB = -60.0        # default offset from IF power (dBFS) to the S-meter reading
+SMETER_CAL_MIN_DB, SMETER_CAL_MAX_DB = -100.0, -20.0
 SIGNAL_POLL_MS = 100
 
 # Scanning: dwell on a quiet channel, pause when S-meter rises, resume when it falls.
+# DWELL / RESUME / FLOOR are defaults; Settings > SCAN changes them at run time.
 SCAN_TICK_MS = 80
 SCAN_DWELL_MS = 220          # quiet time on a channel before stepping
+SCAN_DWELL_CHOICES_MS = (80, 120, 160, 220, 300, 500, 1000)
 SCAN_HOLD_MS = 120           # signal must stay above threshold this long to pause
 SCAN_RESUME_MS = 2500        # quiet time after a hit before scanning continues
+SCAN_RESUME_CHOICES_MS = (1000, 2500, 5000, 10000, 0)   # 0 = stay until SKIP / RESUME
 SCAN_FLOOR_DB = -75.0        # used when squelch is fully open, so band scan still finds signals
+SCAN_FLOOR_MIN_DB, SCAN_FLOOR_MAX_DB = -110.0, -30.0
+SCAN_LOG_MAX = 300           # hits kept in scan_log.json (newest first)
+MAX_LOCKOUTS = 500
+PRIORITY_INTERVAL_CHOICES_S = (2, 3, 5, 10)
+PRIORITY_LOOK_MS = 350       # how long the scanner listens on the priority channel each visit
+PRIORITY_SETTLE_MS = 120     # ignore the S-meter this long after jumping (stale level)
 MAX_MEMORIES = 100
+MEMORY_GROUP_ALL = "ALL"
+
+# Record timer (UTC, because the schedules it is for are published in UTC).
+REC_TIMER_LENGTH_CHOICES_MIN = (5, 10, 15, 20, 30, 45, 60, 90, 120, 180)
+REC_TIMER_CHECK_MS = 5_000
+
+# Screen. The Hosyond / official 7" DSI panels expose /sys/class/backlight/*; HDMI does not.
+BACKLIGHT_DIR = Path("/sys/class/backlight")
+BRIGHTNESS_MIN_PCT = 10
+DIM_AFTER_CHOICES_S = (0, 30, 60, 120, 300, 600)   # 0 = never dim
+DIM_LEVEL_PCT = 10
+
+# Knob acceleration: detents per second -> step multiplier while tuning.
+KNOB_ACCEL_WINDOW_S = 0.25
+KNOB_ACCEL_STAGES = ((30.0, 10), (14.0, 4))
+
+# Spectrum view. Zoom is done by a bigger FFT cropped around the VFO, so it adds real detail.
+SPECTRUM_ZOOMS = (1, 2, 4, 8, 16, 32, 64)   # x64 = 30 kHz view, 65536-point FFT, ~29 Hz bins
+SPECTRUM_AVG_NAMES = ("OFF", "LOW", "MID", "HIGH")
+SPECTRUM_AVG_ALPHA = (1.0, 0.6, 0.4, 0.2)   # weight of the newest frame
+SPECTRUM_STYLES = ("FILLED", "LINE")
+WATERFALL_PALETTES = ("INFERNO", "THEME", "CLASSIC", "GRAY")   # THEME = the colour theme's own
+SPECTRUM_LABELS = ("BOTH", "SIGNALS", "TAGS", "OFF")
+SNAP_MODES = ("TUNE", "TUNE+FILTER", "OFF")   # what a tap near a detected signal does
+
+# Signal detection on the spectrum (markers, snap-to-signal, seek)
+SIGNAL_MIN_SNR_DB = 8.0        # peak must be this far above the local noise floor
+SIGNAL_EDGE_DB = 4.0           # a signal's extent: bins this far above the floor
+SIGNAL_MAX_MARKERS = 10
+SIGNAL_DETECT_EVERY = 4        # frames between detection runs
+SIGNAL_SNAP_PX = 22            # a tap this close (screen pixels) to a signal snaps to it
+SSB_SNAP_MAX_BIN_HZ = 250.0    # SSB edges are only meaningful when zoomed this far
+
+# Frequency tags drawn on the spectrum
+TAGS_FILE = SOFTWARE_DIR / "config" / "tags.json"   # built-in list of well-known frequencies
+USER_TAGS_FILE = USER_CONFIG_DIR / "tags.json"      # your own + FM names learned from RDS
+RDS_TAG_STABLE_S = 5.0         # RDS station name must stay unchanged this long to be learned
+MAX_TAG_LABELS = 18
+DEFAULT_SPECTRUM_AVG = 2
+
+# Data decoders: demodulated audio -> 22.05 kHz s16 -> multimon-ng. Most expect NFM audio.
+DECODERS: dict[str, tuple[str, ...]] = {
+    "OFF": (),
+    "APRS": ("-a", "AFSK1200"),
+    "POCSAG": ("-a", "POCSAG512", "-a", "POCSAG1200", "-a", "POCSAG2400"),
+    "FLEX": ("-a", "FLEX"),
+    "EAS": ("-a", "EAS"),
+    "DTMF": ("-a", "DTMF"),
+}
+DECODER_RATE = 22_050
+DECODER_TEXT_MAX = 40        # decoded lines kept for the strip on the main page
+
+# Network mode: hand the dongle to rtl_tcp so SDR++ / SDR# / GQRX can use it over Wi-Fi.
+RTL_TCP_PORT = 1234
 
 # Post-demod audio DSP. HPF/LPF/notch are IIR biquads (C++); NR/NB are Python blocks that
 # are only spliced into the audio path while their level is > 0.
@@ -132,8 +198,20 @@ MODE_SPECS = {
     "CW": ModeSpec("CW", 500, offset_hz=0),
 }
 CW_PITCH_HZ = 700.0
+CW_PITCH_MIN_HZ, CW_PITCH_MAX_HZ, CW_PITCH_STEP_HZ = 400, 1000, 50
 SSB_LOW_CUT_HZ = 300.0
 SSB_HIGH_CUT_HZ = 2_700.0
+
+# Selectable filter widths per mode (Hz). The default index reproduces MODE_SPECS.
+FILTER_WIDTHS: dict[str, tuple[int, ...]] = {
+    "AM": (4_000, 6_000, 8_000, 10_000),
+    "NFM": (7_500, 10_000, 12_500, 16_000),
+    "WFM": (180_000,),
+    "USB": (1_800, 2_100, 2_400, 2_700, 3_000),
+    "LSB": (1_800, 2_100, 2_400, 2_700, 3_000),
+    "CW": (200, 300, 500, 800, 1_200),
+}
+DEFAULT_FILTER_INDEX = {m: FILTER_WIDTHS[m].index(int(MODE_SPECS[m].bandwidth_hz)) for m in FILTER_WIDTHS}
 
 KNOB_FUNCTIONS = ("TUNE", "VOLUME", "SQUELCH", "GAIN")
 

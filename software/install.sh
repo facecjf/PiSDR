@@ -17,16 +17,27 @@ if [[ "${1:-}" != "--no-apt" ]]; then
     rtl-sdr gnuradio gr-osmosdr \
     python3-numpy python3-pyqt5 python3-pyqtgraph \
     python3-gpiozero python3-lgpio \
-    qtwayland5 libxcb-cursor0
+    qtwayland5 libxcb-cursor0 \
+    multimon-ng
   # pyqtgraph may select PyQt6 if it is present; give Qt6 its Wayland plugin too.
   sudo apt-get install -y qt6-wayland 2>/dev/null || true
+  # Optional: RDS station name / radio text on FM broadcast. PiSDR runs without it.
+  sudo apt-get install -y gr-rds 2>/dev/null || echo "   gr-rds not available - RDS stays off"
 fi
 
 echo "== blacklisting the DVB kernel driver (needs reboot to take effect)"
 echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/blacklist-rtlsdr.conf >/dev/null
 
 echo "== groups"
-sudo usermod -aG gpio,audio,plugdev "$USER_NAME" || true
+sudo usermod -aG gpio,audio,plugdev,video "$USER_NAME" || true
+
+echo "== screen brightness permission (DSI / official touch displays)"
+sudo tee /etc/udev/rules.d/99-pisdr-backlight.rules >/dev/null <<'RULE'
+SUBSYSTEM=="backlight", ACTION=="add", RUN+="/bin/chgrp video /sys/class/backlight/%k/brightness", RUN+="/bin/chmod g+w /sys/class/backlight/%k/brightness"
+RULE
+for f in /sys/class/backlight/*/brightness; do
+  [[ -e "$f" ]] && sudo chgrp video "$f" && sudo chmod g+w "$f"
+done
 
 echo "== folders"
 mkdir -p "$HOME_DIR/.config/pisdr" "$HOME_DIR/Recordings" "$HOME_DIR/.config/autostart"

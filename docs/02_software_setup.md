@@ -59,8 +59,13 @@ version of `gr-osmosdr` continues to work with the rebuilt library.
 
 ```bash
 sudo apt install -y gnuradio gr-osmosdr python3-numpy python3-pyqt5 python3-pyqtgraph \
-                    python3-gpiozero python3-lgpio git qtwayland5 qt6-wayland libxcb-cursor0
+                    python3-gpiozero python3-lgpio git qtwayland5 qt6-wayland libxcb-cursor0 \
+                    multimon-ng
+sudo apt install -y gr-rds      # optional: RDS station name / radio text on FM broadcast
 ```
+
+`multimon-ng` drives the data decoders (APRS, POCSAG, FLEX, EAS, DTMF). `gr-rds` is
+optional; without it the RDS setting shows "not installed" and everything else works.
 
 `python3-pyqtgraph` may pull in PyQt6 and prefer it over PyQt5; both work. The two
 `*wayland*` packages give each Qt generation its Wayland platform plugin, which the
@@ -87,8 +92,13 @@ cd PiSDR/software
 
 - copies nothing; it runs the app from the repository folder so `git pull` updates it,
 - writes `~/.config/autostart/pisdr.desktop` so the app starts full screen on login,
-- adds the user to the `gpio` and `audio` groups,
+- adds the user to the `gpio`, `audio`, `plugdev` and `video` groups,
+- installs `/etc/udev/rules.d/99-pisdr-backlight.rules` so the app can set the DSI screen's
+  brightness (Settings → DISPLAY → Brightness / Dim after),
 - creates `~/.config/pisdr/` for `settings.json` and `~/Recordings/` for audio.
+
+To update an existing install: `cd ~/PiSDR && git pull && cd software && ./install.sh`, then
+reboot (group changes need a fresh login).
 
 Run it by hand first, from the desktop session (so it can open the screen):
 
@@ -137,10 +147,73 @@ in `aplay -l`). Sample rate is 48 kHz.
 
 ## 5. Settings page
 
-Long-press **FUNC** (K3) opens Settings: two columns of grouped rows (RADIO, DISPLAY on
-the left; AUDIO DSP, SYSTEM on the right). Tap a row to select it, tap it again or press
-**CHANGE** to toggle/activate it, and turn the knob to step its value. **UP/DOWN** move
-the selection for key-only use.
+Long-press **FUNC** (K3) opens Settings. Five tabs run across the top: **RADIO, AUDIO,
+DISPLAY, SCAN, SYSTEM**. Tap a tab or a row to select it, tap the row again or press
+**CHANGE** to toggle/activate it, and turn the knob to step its value. **UP/DOWN** move the
+selection and walk across tabs; long-press **UP/DOWN** jumps a whole tab. Rows ending in
+`▸` open a page; **BACK** on that page returns to Settings.
+
+| Tab | Rows |
+|---|---|
+| RADIO | Filter width (per mode), Tuner AGC, RF gain, Squelch, Bias tee, PPM correction, S-meter calibration, CW pitch, Data decoder, Clear decoder text, RDS on FM broadcast |
+| AUDIO | Volume, Noise reduction, Noise blanker, Notch, High-pass, Low-pass; Record now, Recordings ▸, Timer start / length / repeat, Timer (arm) |
+| DISPLAY | Theme, Brightness, Dim after, Clock (LOCAL/UTC), Knob acceleration, Tap snaps to signal, HF conditions panel; Spectrum rate, Waterfall speed, Zoom, Averaging, Peak hold, Trace style, Waterfall colours, Labels |
+| SCAN | Dwell per channel, Resume after, Trigger level, Memory group, ON NOW only; Priority channel, Priority check every, Lockouts (CLEAR), Scan log ▸ |
+| SYSTEM | Load HF presets, Network mode (rtl_tcp) ▸, Exit PiSDR, Shut down Pi; an info panel with the radio backend, IP address, which optional tools are installed, the backlight device and the recordings folder |
+
+Destructive rows (clear lockouts, shut down) ask for a second press within 3 s.
+
+**Receiver rows.**
+
+- **Filter width** is remembered per mode: AM 4/6/8/10 kHz, NFM 7.5/10/12.5/16 kHz,
+  USB/LSB 1.8–3.0 kHz, CW 200–1200 Hz (WFM is fixed). The mode picker shows each mode's
+  current width and the passband marker on the spectrum follows it.
+- **PPM correction**: tune a known carrier (WWV 10 MHz, a NOAA weather station) in USB or
+  CW, zoom the spectrum, and step PPM until the carrier sits on the VFO line. The V4's TCXO
+  is usually within ±2.
+- **S-meter calibration** shifts the dB reading: feed a known level, or simply line up a
+  strong local station with S9+ on a reference receiver.
+- **CW pitch** (400–1000 Hz) sets both the CW tone you hear and where the Morse decoder listens.
+
+**Display rows.** **Clock UTC** shows `HH:MMZ` in the top bar — schedules, the record timer
+and the scan log all use UTC. **Brightness** and **Dim after** only work on a DSI panel
+with a backlight device (the Hosyond and official displays); on HDMI the row reads
+"no panel". Any touch, key or knob movement restores full brightness. **Knob acceleration**
+multiplies the tuning step ×4 / ×10 when the knob is spun fast. **Averaging** smooths the
+trace and **Peak hold** draws a grey max-hold line (reset on retune or zoom).
+
+**Spectrum and waterfall.**
+
+- **Zoom** ×1 … ×64 narrows the view around the VFO with a proportionally bigger FFT, so
+  zooming adds real resolution: ×64 shows 30 kHz at about 30 Hz per bin, enough to see
+  SSB voice and separate CW signals. The view re-centres as you tune. The `− x8 +` buttons
+  at the bottom-right of the waterfall change it without opening Settings.
+- **◀ / ▶** (either side of the zoom buttons) seek to the next detected signal below or
+  above the VFO in the current view.
+- **Signal markers**: every signal more than 8 dB above the local noise floor gets a ▼
+  with its level above the noise in dB (strongest 10 shown).
+- **Tap snaps to signal** (`TUNE`): a tap near a marked signal tunes it properly instead
+  of where your finger landed — the carrier for AM/CW, the centre for FM, the edge of the
+  voice for USB/LSB (SSB only snaps at zoom ×8 or closer, where the edge can be measured).
+  `TUNE+FILTER` also picks the narrowest filter that passes the signal's 99 % power
+  bandwidth. `OFF` tunes exactly where you tap.
+- **Frequency tags** are drawn along the top with dashed lines down to the trace, and the
+  name of whatever is in the passband is shown over it. Sources, highest priority first:
+  your memories, `~/.config/pisdr/tags.json` (your own tags and FM station names learned
+  from RDS once the name has been steady for 5 s), and the built-in
+  `software/config/tags.json` (time stations, distress and calling frequencies, NOAA, FRS/
+  GMRS, MURS, marine, aviation, ISS, APRS, ADS-B …). To add your own, edit the user file:
+
+  ```json
+  {"tags": [{"hz": 146940000, "label": "Club repeater"}]}
+  ```
+
+  A hand-made tag is never overwritten by RDS. Restart PiSDR after editing the file.
+- **Labels** chooses what is drawn: `BOTH`, `SIGNALS` (markers only), `TAGS` or `OFF`.
+- **Trace style** `FILLED` fills under the trace with a gradient of the waterfall colours;
+  `LINE` is the old plain trace (slightly cheaper on CPU if the Pi struggles).
+- **Waterfall colours**: `INFERNO` (black → purple → orange → yellow), `THEME` (follows
+  the UI theme), `CLASSIC` (blue → green → yellow → red) or `GRAY`.
 
 **Theme** (DISPLAY) switches the whole UI live and is remembered:
 
@@ -150,10 +223,12 @@ the selection for key-only use.
 | Night | red-on-black for dark rooms, preserves night vision |
 | Ice | cool blue/violet dark theme |
 | Daylight | light, high contrast for bright rooms |
+| Inferno | purple-black panels, orange values, magenta selection; matches the INFERNO waterfall |
+| Green | monochrome green phosphor; set **Waterfall colours** to `THEME` for a green waterfall too |
 
 ## 5a. Audio DSP (noise reduction / filters)
 
-Settings rows under AUDIO DSP:
+Settings → AUDIO, left column:
 
 | Setting | What it does |
 |---|---|
@@ -174,8 +249,8 @@ lower **Spectrum rate** or turn them off; the default chain is unaffected.
 ## 5a-ii. CW (Morse) decoder
 
 Select **CW** mode and a text strip appears under the frequency readout. Tune so the
-station's tone sits inside the passband marker (the decoder listens at the 700 Hz CW
-pitch, ±100 Hz). Decoded characters scroll in; the estimated WPM is shown at right and
+station's tone sits inside the passband marker (the decoder listens at the CW pitch,
+700 Hz by default, ±100 Hz; Settings → RADIO → CW pitch). Decoded characters scroll in; the estimated WPM is shown at right and
 **CLEAR** empties the buffer. Unknown patterns print as `*`.
 
 Expectations: clean machine or keyer CW at 8–40 WPM decodes well; fading, QRM or sloppy
@@ -183,24 +258,91 @@ hand-sent code produces partial copy. Decoding runs on a 1 kHz envelope produced
 blocks, so it has no effect on audio quality. The simulator sends a looping `CQ` so you
 can test the display without a dongle.
 
+## 5a-iii. Data decoders (multimon-ng)
+
+Settings → RADIO → **Data decoder** cycles `OFF / APRS / POCSAG / FLEX / EAS / DTMF`. The
+demodulated audio is resampled to 22.05 kHz and piped to `multimon-ng`; decoded lines
+appear in a strip under the frequency readout (newest two lines, count at right, **CLEAR**
+empties it, the last 40 are kept). The top bar shows the active decoder.
+
+| Decoder | Tune | Mode |
+|---|---|---|
+| APRS (AFSK1200) | 144.390 MHz (N. America), 144.800 MHz (Europe) | NFM |
+| POCSAG 512/1200/2400 | local paging frequencies (often 152–158, 929–932 MHz) | NFM |
+| FLEX | 929–932 MHz paging | NFM |
+| EAS (SAME headers) | NOAA weather radio 162.400–162.550 MHz | NFM |
+| DTMF | any FM voice channel | NFM / AM |
+
+Keep squelch open or just below the noise: multimon-ng only sees audio that gets past
+squelch. Decoding is by ear-quality audio, so weak or over-deviated signals decode partially.
+Check reception and privacy laws before decoding pager traffic where you live.
+
+## 5a-iv. RDS on FM broadcast
+
+With **gr-rds** installed and Settings → RADIO → **RDS** on, tuning a broadcast station in
+WFM shows the station name (PS), programme type (PTY) and radio text (RT) in a strip under
+the frequency readout. Strong stations decode within a few seconds; it clears when you retune.
+
 ## 5b. Memories and scanning
 
 Saved frequencies live in `~/.config/pisdr/memories.json` (created the first time you press
-SAVE on the MEMORIES page). Soft keys on the main screen:
+SAVE on the MEMORIES page). Controls:
 
 | Action | Control |
 |---|---|
 | Open memories | short press K4 (`MEM`) |
 | Save / delete / recall | soft keys on the MEMORIES page |
+| Filter by group | the group button top-right of MEMORIES (also used by memory scan) |
+| Show only stations scheduled now | `ON NOW` button on MEMORIES |
+| Set / clear priority channel | long press `TUNE` on MEMORIES (badge **P**) |
+| Lock out / unlock a memory | long press `DELETE` on MEMORIES (badge **⊘**) |
 | Start / stop scan | long press K4 |
 | While scanning | `HOLD`, `SKIP`, `BAND`/`MEM` (scan source), `STOP` |
-| Settings (incl. recording) | long press K3 (`FUNC`) |
+| Lock out the channel being scanned | long press `SKIP` |
+| Settings | long press K3 (`FUNC`) |
+
+**Groups and schedules.** A memory can carry a `group` and a UTC schedule. Saving a memory
+while a group is selected puts it in that group. Edit `memories.json` (or the presets file)
+to add schedules:
+
+```json
+{"name": "E11 Oblique", "vfo_hz": 8102000, "mode": "USB", "step_hz": 1000,
+ "group": "NUMBERS", "utc": "03:10-03:35", "days": "Mon,Wed"}
+```
+
+`utc` is `HH:MM-HH:MM` in UTC (windows may cross midnight; they count against the day they
+start); `days` is optional. Scheduled memories show **ON** while inside their window and the
+detail line shows the window. Memory scan follows the selected group and, with
+Settings → SCAN → **ON NOW only**, skips memories that are off schedule. Schedules need the
+Pi's clock right: network time over Wi-Fi, or an RTC battery for off-grid use.
+
+**Scan settings** (Settings → SCAN): **Dwell per channel** 80–1000 ms (how long a quiet
+channel is listened to), **Resume after** 1–10 s or `STAY` (how long a held channel must be
+quiet before scanning continues; `STAY` waits for SKIP/RESUME), and **Trigger level**: the
+scanner holds on a channel above the higher of this and the squelch level (default −75 dB).
+Band scan steps the current band by the tuning step; memory scan walks the selected group.
+Turning the knob or tapping the spectrum cancels the scan.
+
+**Priority.** Pick a priority memory (Settings → SCAN → Priority channel, or long-press TUNE
+on MEMORIES). While scanning, every 2–10 s the scanner hops to it for about a third of a
+second; if it is active the scanner holds there, otherwise it goes straight back. `+P` in the
+top bar shows priority is armed.
+
+**Lockouts** skip a frequency in both band and memory scan. Long-press SKIP while scanning, or
+lock memories from the MEMORIES page; Settings → SCAN → Lockouts → CLEAR (press twice) removes them.
+
+**Scan log** (Settings → SCAN → Scan log ▸) lists every hold: time (UTC when the clock is set
+to UTC), frequency, mode, name, peak level and how long it lasted, newest first (300 kept in
+`~/.config/pisdr/scan_log.json`). `TUNE` jumps to a hit, `LOCK` toggles its lockout, `CLEAR`
+(press twice) empties the log.
 
 **HF utility / numbers stations.** The **HF utility** band (3–18 MHz, USB) lands on
 UVB-76 at 4625 kHz. Settings → SYSTEM → **Load HF presets** merges
-`software/config/presets_numbers_stations.json` (UVB-76, The Pip, HM01 Cuba, E11/E07/S06
-slots, WWV, CHU, VOLMET) into your memories without duplicating existing ones; then use
-memory scan to catch a transmission. Edit that JSON to add your own. HF needs a real
+`software/config/presets_numbers_stations.json` (UVB-76, Pip, Squeaky Wheel, other
+Russian channel markers, HFGCS, Canadian Forces, USCG, RAF Volmet, plus scheduled E11/E07/V13
+slots) into your memories without duplicating existing ones, and adds the group and
+schedule to presets you loaded before (groups `RU MARKERS`, `MIL AIR`, `VOLMET`, `NUMBERS`,
+`TIME`). Then pick a group on the MEMORIES page and memory-scan it to catch a transmission. Edit that JSON to add your own. HF needs a real
 antenna (long wire or loop) — the whip will hear almost nothing — and keep RF gain around
 20–30 dB to avoid overload from broadcasters.
 
@@ -228,9 +370,33 @@ Weather location defaults to IP geolocation; to fix it, add to `settings.json`:
 
 (`"metric"` gives °C and km/h.)
 
-Band scan steps the current band by the tuning step and pauses when the S-meter is above
-the higher of your squelch setting and −75 dB. Memory scan walks the saved list the same
-way. Turning the knob or tapping the spectrum cancels the scan.
+## 5d. Recording, playback and the record timer
+
+**Record now** (Settings → AUDIO) writes a 48 kHz mono WAV to `~/Recordings/`, named
+`pisdr_YYYYmmdd_HHMMSS_<Hz>_<MODE>.wav`. Recordings are taken before the volume control,
+so turning the volume down doesn't make them quieter.
+
+**Recordings ▸** lists them newest first. `PLAY` plays the selected file through the radio's
+audio output (the radio is muted meanwhile, `▶ PLAY` shows in the top bar), `STOP` ends it,
+`DELETE` (press twice) removes the file. Leaving the page stops playback.
+
+**Record timer**: set **Timer start** (UTC; the knob steps 5 min, CHANGE jumps to the next
+5-minute mark from now), **Timer length** (5 min–3 h)
+and **Timer repeat** (`ONCE` / `DAILY`), tune the station, then set **Timer** to arm it —
+arming captures the current frequency and mode. At the start time PiSDR stops any scan or
+playback, tunes the station, records for the set length and then tunes back to where you
+were. `TMR HH:MMZ` in the top bar shows it is armed. Stopping the recording by hand ends that
+run. A one-shot timer disarms itself afterwards. The Pi's clock must be correct (network time
+or an RTC).
+
+## 5e. Network mode (rtl_tcp)
+
+Settings → SYSTEM → **Network mode ▸** hands the dongle to `rtl_tcp` on port 1234, so SDR++,
+SDR#, GQRX or any RTL-TCP client on your network can use the radio. The page shows the
+address to connect to (for example `192.168.1.137:1234`). PiSDR's own receiver, scanner,
+recorder and decoders are paused meanwhile; **STOP** (or pushing the knob) shuts `rtl_tcp`
+down and gives the dongle back to PiSDR. The PPM correction and bias tee setting are passed
+to `rtl_tcp`. rtl_tcp has no password: only use it on a network you trust.
 
 ## 6. Headless CLI tune test (no UI)
 
@@ -278,7 +444,8 @@ python3 -m pisdr --check
 
 This runs `rtl_test`, imports `gnuradio` and `osmosdr`, opens the dongle, builds the
 demodulators, opens the audio device and constructs the backend, printing a traceback for
-the first step that fails. Typical results:
+the first step that fails. A final "extras" step lists the optional pieces (gr-rds,
+multimon-ng, rtl_tcp, screen backlight access); these never fail the check. Typical results:
 
 | First failed step | Fix |
 |---|---|
@@ -297,3 +464,6 @@ the first step that fails. Typical results:
 | Audio stutters | Reduce `SAMPLE_RATE` in `pisdr/config.py` to 1.024e6, or `FFT_FPS` to 15 |
 | App starts on the HDMI monitor instead of the DSI | Disconnect HDMI, or set `PISDR_SCREEN=DSI-1` in the `.desktop` `Exec` line |
 | "Undervoltage detected" in `dmesg` | Power supply or cable; see doc 01 section 5 |
+| Brightness row says "no access" | Re-run `install.sh` (udev rule + `video` group) and reboot |
+| "Radio did not reopen" after bias tee or network mode | Something else holds the dongle (`rtl_tcp`, another SDR program). Close it, then toggle bias tee or enter/leave network mode to retry |
+| Data decoder switches itself back to OFF | `multimon-ng` is missing (`sudo apt install multimon-ng`); the reason is shown as a status message |

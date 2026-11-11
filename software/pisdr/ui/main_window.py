@@ -5,8 +5,10 @@ import logging
 import time
 
 from .. import config
+from ..backlight import Backlight
 from ..qt import Qt, QtCore, QtGui, QtWidgets, Signal
 from ..radio.backend import Backend
+from ..rec_timer import RecTimer
 from ..scan import Scanner
 from ..spacewx import SpaceWxFetcher
 from ..state import RadioState, format_step
@@ -14,7 +16,10 @@ from . import style
 from .cw_panel import CwPanel
 from .freq_display import FreqDisplay, SMeter
 from .hf_panel import HfPanel
-from .pickers import BandPicker, Keypad, MemoriesPage, ModePicker, Page, SettingsPage
+from .info_strips import DecoderPanel, RdsPanel
+from .list_pages import NetworkPage, RecordingsPage, ScanLogPage
+from .pickers import BandPicker, Keypad, MemoriesPage, ModePicker, Page
+from .settings_page import SettingsPage
 from .softkeys import SoftKeyBar
 from .spectrum import SpectrumWaterfall
 
@@ -65,13 +70,17 @@ class MainPage(Page):
         row.addWidget(self.freq, 1)
         row.addWidget(self.smeter, 0)
         layout.addLayout(row)
-        # Below the readout: spectrum (+ CW strip) on the left, HF conditions on the right.
+        # Below the readout: strips + spectrum on the left, HF conditions on the right.
         split = QtWidgets.QHBoxLayout()
         split.setSpacing(2)
         left = QtWidgets.QVBoxLayout()
         left.setSpacing(2)
         self.cw_panel = CwPanel(state)
         left.addWidget(self.cw_panel)
+        self.rds_panel = RdsPanel(state)
+        left.addWidget(self.rds_panel)
+        self.decoder_panel = DecoderPanel(state)
+        left.addWidget(self.decoder_panel)
         self.spectrum = SpectrumWaterfall(state)
         left.addWidget(self.spectrum, 1)
         split.addLayout(left, 1)
@@ -111,13 +120,19 @@ class MainPage(Page):
 
 
 class MainWindow(QtWidgets.QMainWindow):
-    PAGE_MAIN, PAGE_BAND, PAGE_MODE, PAGE_KEYPAD, PAGE_SETTINGS, PAGE_MEMORIES = range(6)
+    (PAGE_MAIN, PAGE_BAND, PAGE_MODE, PAGE_KEYPAD, PAGE_SETTINGS, PAGE_MEMORIES,
+     PAGE_RECORDINGS, PAGE_SCAN_LOG, PAGE_NETWORK) = range(9)
+
+    _ACTIVITY_EVENTS = (QtCore.QEvent.Type.MouseButtonPress, QtCore.QEvent.Type.TouchBegin,
+                        QtCore.QEvent.Type.KeyPress, QtCore.QEvent.Type.Wheel)
 
     def __init__(self, state: RadioState, backend: Backend, windowed: bool = False) -> None:
         super().__init__()
         self.state = state
         self.backend = backend
         self.scanner = Scanner(state, self)
+        self.rec_timer = RecTimer(state, self)
+        self.backlight = Backlight()
         self.setWindowTitle("PiSDR")
         style.apply_theme(state.theme)
         self.setStyleSheet(style.STYLESHEET)
@@ -140,6 +155,9 @@ class MainWindow(QtWidgets.QMainWindow):
         bar.setSpacing(10)
         self.topbar_left = QtWidgets.QLabel("")
         self.topbar_left.setTextFormat(Qt.TextFormat.RichText)
+        # Clip instead of growing when many status items are shown.
+        self.topbar_left.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
+                                       QtWidgets.QSizePolicy.Policy.Preferred)
         self.hf_chip = _Chip("")
         self.hf_chip.setToolTip("HF conditions panel")
         self.hf_chip.clicked.connect(self._hf_chip_tapped)
@@ -157,13 +175,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.band_page = BandPicker(state)
         self.mode_page = ModePicker(state)
         self.keypad_page = Keypad(state)
-        self.settings_page = SettingsPage(state)
+        self.settings_page = SettingsPage(state, backend, self.backlight)
         self.memories_page = MemoriesPage(state)
-        for page in (self.main_page, self.band_page, self.mode_page, self.keypad_page,
-                     self.settings_page, self.memories_page):
+        self.recordings_page = RecordingsPage(state, backend)
+        self.scan_log_page = ScanLogPage(state)
+        self.network_page = NetworkPage(state, backend)
+        pages = (self.main_page, self.band_page, self.mode_page, self.keypad_page, self.settings_page,
+                 self.memories_page, self.recordings_page, self.scan_log_page, self.network_page)
+        for page in pages:
             self.stack.addWidget(page)
-            page.done.connect(self.show_main)
+            page.done.connect(lambda p=page: self._page_done(p))
+            page.done_main.connect(self.show_main)
+            page.softkeys_changed.connect(lambda p=page: self._page_softkeys(p))
         self.settings_page.quit_requested.connect(self.close)
+        self.settings_page.open_page.connect(self._open_named)
+        self.network_page.stop_requested.connect(self._leave_network)
 
         self.softkeys = SoftKeyBar()
         layout.addWidget(self.softkeys)
@@ -182,6 +208,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.main_page.freq.installEventFilter(self)
         self._freq_press_t = 0.0
 
+        # Screen dimming: any touch / key / knob counts as activity.
+        self._last_activity = time.monotonic()
+        self._dimmed = False
+        QtWidgets.QApplication.instance().installEventFilter(self)
+        self._dim_timer = QtCore.QTimer(self)
+        self._dim_timer.timeout.connect(self._check_dim)
+        self._dim_timer.start(1000)
+        self.backlight.set_percent(state.brightness)
+
         self._clock = QtCore.QTimer(self)
         self._clock.timeout.connect(self._update_topbar)
         self._clock.start(1000)
@@ -190,6 +225,8 @@ class MainWindow(QtWidgets.QMainWindow):
         state.message.connect(self.show_message)
         backend.status.connect(self.show_message)
         self.scanner.status.connect(self.show_message)
+        self.rec_timer.status.connect(self.show_message)
+        self.rec_timer.started.connect(self._timer_started)
         backend.spectrum_ready.connect(self.main_page.spectrum.push_spectrum)
         backend.center_changed.connect(self.main_page.spectrum.set_center)
         backend.cw_text.connect(state.append_cw_text)
@@ -213,11 +250,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self._refresh_main_softkeys()
         self.state.set_vfo(hz)
 
+    def _timer_started(self) -> None:
+        self.scanner.stop()
+        self.backend.stop_playback()
+        self._refresh_main_softkeys()
+
     # ------------------------------------------------------------------ pages
     def current_page(self) -> Page:
         return self.stack.currentWidget()  # type: ignore[return-value]
 
     def show_page(self, index: int) -> None:
+        if self.state.network_mode and index != self.PAGE_NETWORK:
+            return   # the dongle belongs to rtl_tcp; only the network page's STOP gets out
         if index != self.PAGE_MAIN and self.state.scanning:
             self.scanner.stop()
         self.stack.setCurrentIndex(index)
@@ -233,12 +277,48 @@ class MainWindow(QtWidgets.QMainWindow):
     def toggle_page(self, index: int) -> None:
         self.show_main() if self.stack.currentIndex() == index else self.show_page(index)
 
+    def _page_done(self, page: Page) -> None:
+        if page.return_to == "settings":
+            self.show_page(self.PAGE_SETTINGS)
+        else:
+            self.show_main()
+
+    def _page_softkeys(self, page: Page) -> None:
+        if self.current_page() is page:
+            self.softkeys.set_labels(page.softkey_labels())
+
+    def _open_named(self, name: str) -> None:
+        if name == "network":
+            self._enter_network()
+        elif name == "recordings":
+            self.show_page(self.PAGE_RECORDINGS)
+        elif name == "scan_log":
+            self.show_page(self.PAGE_SCAN_LOG)
+
+    def _enter_network(self) -> None:
+        self.scanner.stop()
+        self.show_message("Handing the dongle to rtl_tcp...")
+        QtWidgets.QApplication.processEvents()
+        error = self.backend.start_network_mode()
+        if error:
+            self.show_message(error)
+            return
+        self.show_page(self.PAGE_NETWORK)
+
+    def _leave_network(self) -> None:
+        self.show_message("Taking the dongle back...")
+        QtWidgets.QApplication.processEvents()
+        error = self.backend.stop_network_mode()
+        self.show_main()
+        self.show_message(error or "Radio back on the dongle")
+
     def _refresh_main_softkeys(self) -> None:
         if self.stack.currentIndex() == self.PAGE_MAIN:
             self.softkeys.set_labels(self.main_page.softkey_labels())
 
     # ------------------------------------------------------------------ control routing
     def key_pressed(self, index: int) -> None:
+        self._activity()
         self.softkeys.flash(index)
         if self.stack.currentIndex() != self.PAGE_MAIN:
             self.current_page().on_softkey(index)
@@ -266,9 +346,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self.show_page(self.PAGE_MEMORIES)
 
     def key_long_pressed(self, index: int) -> None:
+        self._activity()
         if self.stack.currentIndex() != self.PAGE_MAIN:
             if not self.current_page().on_softkey_long(index):
                 self.show_main()
+            else:
+                self.softkeys.set_labels(self.current_page().softkey_labels())
+            return
+        if self.state.scanning and index == 1:
+            self.scanner.lockout_current()   # long SKIP: never stop here again
+            self._refresh_main_softkeys()
             return
         if index == 3:
             # Long MEM: start/stop band scan (or memory scan if that source is selected).
@@ -285,6 +372,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.state.cycle_mode()
 
     def knob_turned(self, detents: int) -> None:
+        self._activity()
         if self.state.scanning and self.stack.currentIndex() == self.PAGE_MAIN:
             # Manual tune while scanning cancels the scan (same as a handheld).
             self.scanner.stop()
@@ -293,6 +381,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.state.knob_turned(detents)
 
     def encoder_pushed(self) -> None:
+        self._activity()
         if self.state.scanning and self.stack.currentIndex() == self.PAGE_MAIN:
             self.scanner.toggle_hold()
             self._refresh_main_softkeys()
@@ -301,7 +390,21 @@ class MainWindow(QtWidgets.QMainWindow):
             self.state.cycle_step()
 
     def encoder_held(self) -> None:
+        self._activity()
         self.toggle_page(self.PAGE_KEYPAD)
+
+    # ------------------------------------------------------------------ screen brightness
+    def _activity(self) -> None:
+        self._last_activity = time.monotonic()
+        if self._dimmed:
+            self._dimmed = False
+            self.backlight.set_percent(self.state.brightness)
+
+    def _check_dim(self) -> None:
+        after = self.state.dim_after_s
+        if after and not self._dimmed and time.monotonic() - self._last_activity >= after:
+            self._dimmed = True
+            self.backlight.set_percent(min(self.state.brightness, config.DIM_LEVEL_PCT))
 
     # ------------------------------------------------------------------ feedback
     def show_message(self, text: str) -> None:
@@ -324,14 +427,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self._refresh_main_softkeys()
         if field == "theme":
             self._apply_theme(self.state.theme)
-        if field != "signal_db":
+        elif field == "brightness" and not self._dimmed:
+            self.backlight.set_percent(self.state.brightness)
+        elif field == "dim_after_s":
+            self._activity()
+        if field not in ("signal_db", "cw_text", "decoder_lines", "rds"):
             self._update_topbar()
 
     def _apply_theme(self, name: str) -> None:
         style.apply_theme(name)
         self.setStyleSheet(style.STYLESHEET)
-        for w in (self.main_page.spectrum, self.main_page.cw_panel, self.main_page.hf_panel,
-                  self.main_page.freq, self.main_page.smeter):
+        mp = self.main_page
+        for w in (mp.spectrum, mp.cw_panel, mp.rds_panel, mp.decoder_panel, mp.hf_panel, mp.freq, mp.smeter):
             retheme = getattr(w, "retheme", None)
             if retheme:
                 retheme()
@@ -351,10 +458,19 @@ class MainWindow(QtWidgets.QMainWindow):
             f"<span style='color:{dim}'>SQL</span> {'open' if s.squelch_db <= config.SQUELCH_MIN_DB else f'{s.squelch_db:.0f}'}",
             f"<span style='color:{dim}'>GAIN</span> {'AGC' if s.agc else f'{s.gain_db:.0f} dB'}",
         ]
+        if s.network_mode:
+            parts.append(f"<span style='color:{acc}'><b>NET</b></span>")
         if s.bias_tee:
             parts.append(f"<span style='color:{acc}'><b>BIAS</b></span>")
         if s.recording:
             parts.append(f"<span style='color:{style.REC}'><b>&#9679; REC</b></span>")
+        elif s.timer_armed:
+            parts.append(f"<span style='color:{dim}'>TMR</span> {s.timer_start_min // 60:02d}:"
+                         f"{s.timer_start_min % 60:02d}Z")
+        if s.playing:
+            parts.append(f"<span style='color:{style.OK}'><b>&#9654; PLAY</b></span>")
+        if s.decoder != "OFF":
+            parts.append(f"<span style='color:{acc}'><b>{s.decoder}</b></span>")
         if s.dsp_nr_level > 0:
             parts.append(f"<span style='color:{acc}'><b>NR{s.dsp_nr_level}</b></span>")
         if s.dsp_nb_level > 0:
@@ -364,9 +480,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if s.scanning:
             held = "HOLD" if s.scan_held else "SCAN"
             src = "MEM" if s.scan_source == "memory" else "BAND"
-            parts.append(f"<span style='color:{acc}'><b>{held}:{src}</b></span>")
+            prio = "+P" if s.priority else ""
+            parts.append(f"<span style='color:{acc}'><b>{held}:{src}{prio}</b></span>")
         knob = f"<span style='color:{acc}'><b>KNOB {s.knob_function}</b></span>"
-        clock = time.strftime("%H:%M")
+        clock = time.strftime("%H:%MZ", time.gmtime()) if s.clock_utc else time.strftime("%H:%M")
         self.topbar_left.setText(" &nbsp;&nbsp; ".join(parts))
         self.topbar_right.setText(f"{knob} &nbsp;&nbsp; {clock}")
         wx = s.space_wx
@@ -379,11 +496,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ events
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        etype = event.type()
+        if etype in self._ACTIVITY_EVENTS:
+            self._activity()
         # Long-press on the frequency display opens the keypad; digits are handled by the widget.
         if obj is self.main_page.freq:
-            if event.type() == QtCore.QEvent.Type.MouseButtonPress:
+            if etype == QtCore.QEvent.Type.MouseButtonPress:
                 self._freq_press_t = time.monotonic()
-            elif event.type() == QtCore.QEvent.Type.MouseButtonRelease:
+            elif etype == QtCore.QEvent.Type.MouseButtonRelease:
                 if time.monotonic() - self._freq_press_t > 0.6:
                     self.show_page(self.PAGE_KEYPAD)
                     return True
@@ -411,7 +531,8 @@ class MainWindow(QtWidgets.QMainWindow):
         elif _kv(Qt.Key.Key_0) <= key <= _kv(Qt.Key.Key_9) or key == _kv(Qt.Key.Key_Period):
             if self.stack.currentIndex() != self.PAGE_KEYPAD:
                 self.show_page(self.PAGE_KEYPAD)
-            self.keypad_page.key(chr(key))
+            if self.stack.currentIndex() == self.PAGE_KEYPAD:
+                self.keypad_page.key(chr(key))
         else:
             super().keyPressEvent(event)
 
@@ -419,8 +540,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.knob_turned(1 if event.angleDelta().y() > 0 else -1)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        QtWidgets.QApplication.instance().removeEventFilter(self)
         self.scanner.stop()
         self.spacewx.stop()
+        self.backend.stop_playback()
         self.state.save()
         self.backend.stop()
         super().closeEvent(event)

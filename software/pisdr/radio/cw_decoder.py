@@ -13,6 +13,7 @@ unaffected and the decoder merely runs a little late.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Callable
 
 import numpy as np
@@ -37,19 +38,29 @@ MORSE_TABLE = {
 }
 
 
+def _smoothing(rate: float, time_constant_s: float) -> float:
+    """Per-sample weight of a one-pole smoother with the given time constant."""
+    return 1.0 - math.exp(-1.0 / (rate * time_constant_s))
+
+
 class MorseDecoder:
     """Envelope → text. Call :meth:`process` with float envelope chunks."""
+
+    NOISE_MARGIN = 3.0      # key-down needs the envelope this many noise std-devs above the floor
 
     def __init__(self, on_text: Callable[[str], None], rate: float = ENVELOPE_RATE,
                  wpm_lock: float | None = None) -> None:
         self.on_text = on_text
         self.rate = float(rate)
         self.wpm_lock = wpm_lock
-        # Adaptive levels.
+        # Adaptive levels, updated per sample so they follow time, not GNU Radio chunk sizes.
+        self._k_fast = _smoothing(self.rate, 0.010)    # peak attack
+        self._k_track = _smoothing(self.rate, 0.050)   # mark level while key-down, noise while key-up
+        self._k_slow = _smoothing(self.rate, 1.5)      # mark level fading out during long key-up
+        self._settle = int(0.015 * self.rate)          # envelope filter ring-down after a mark
         self._lo = 0.0
-        self._hi = 1e-3
-        self._nstd = 1e-3                   # noise standard deviation (key-up samples)
-        self._thresh = 1e-3
+        self._hi = 0.0
+        self._nvar = 0.0                    # noise variance around the floor (key-up samples)
         self._init = False
         self._key_down = False
         self._run = 0                       # samples in current mark/space state
@@ -83,29 +94,33 @@ class MorseDecoder:
     def process(self, env: np.ndarray) -> None:
         if len(env) == 0:
             return
-        env = np.asarray(env, dtype=np.float32)
-        block_min = float(env.min())
-        block_max = float(env.max())
+        env = np.asarray(env, dtype=np.float64)
         if not self._init:
-            self._lo, self._hi = block_min, block_max
-            self._nstd = max(float(env.std()), 1e-6)
+            self._lo = self._hi = float(np.median(env))
+            self._nvar = float(env.var()) or (self._lo * 0.5) ** 2
             self._init = True
-        # Floor: fast when falling, slow when rising. Peak: fast rise, slow fall.
-        self._lo += (block_min - self._lo) * (0.3 if block_min < self._lo else 0.02)
-        self._hi += (block_max - self._hi) * (0.3 if block_max > self._hi else 0.01)
-        if self._hi < self._lo + 1e-6:
-            self._hi = self._lo + 1e-6
-        # Noise spread from the key-up samples of this block.
-        quiet = env[env < self._thresh]
-        if len(quiet) >= 8:
-            self._nstd += (max(float(quiet.std()), 1e-6) - self._nstd) * 0.2
-        # Threshold: midpoint, but never inside the noise.
-        mid = self._lo + (self._hi - self._lo) * 0.5
-        thresh = max(mid, self._lo + 4.0 * self._nstd)
-        self._thresh = thresh
-        hyst = max((self._hi - self._lo) * 0.08, self._nstd * 0.5)
+        kf, kt, ks = self._k_fast, self._k_track, self._k_slow
+        lo, hi, nvar = self._lo, self._hi, self._nvar
+        settle = self._settle
+        thresh = max(lo + (hi - lo) * 0.5, lo + self.NOISE_MARGIN * nvar ** 0.5)
 
         for v in env:
+            if v > hi:
+                hi += (v - hi) * kf
+            if self._key_down:
+                hi += (v - hi) * kt
+            else:
+                hi += (lo - hi) * ks
+                # Noise statistics only from settled key-up samples, not the falling edge of a mark.
+                if self._run > settle and v < thresh:
+                    nvar += ((v - lo) ** 2 - nvar) * kt
+                    lo += (v - lo) * kt
+            if v < lo:
+                lo += (v - lo) * kf
+            # Threshold: midpoint between floor and mark level, but never inside the noise.
+            nstd = nvar ** 0.5
+            thresh = max(lo + (hi - lo) * 0.5, lo + self.NOISE_MARGIN * nstd)
+            hyst = max((hi - lo) * 0.08, nstd * 0.5)
             if self._key_down:
                 down = v > thresh - hyst
             else:
@@ -123,6 +138,7 @@ class MorseDecoder:
                 self._on_space(dur)
             self._key_down = down
             self._run = 1
+        self._lo, self._hi, self._nvar = lo, hi, nvar
 
     # ------------------------------------------------------------------ internals
     def _on_mark(self, dur: float) -> None:

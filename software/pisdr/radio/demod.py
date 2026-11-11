@@ -4,6 +4,9 @@ Every demodulator takes complex baseband at ``IF_RATE`` (240 kS/s, VFO already t
 to 0 Hz by the flowgraph's xlating filter) and produces float audio at ``AUDIO_RATE``
 (48 kS/s). They are all built once and sit behind a pair of ``blocks.selector`` so that only
 the active branch receives samples and burns CPU.
+
+Each demodulator has ``set_bandwidth(hz)``; CW also has ``set_pitch(hz)``. Both just swap
+FIR taps, which GNU Radio applies safely while the flowgraph runs.
 """
 from __future__ import annotations
 
@@ -19,10 +22,13 @@ AUDIO_RATE = config.AUDIO_RATE
 DECIM = IF_RATE // AUDIO_RATE   # 5
 
 
+def _channel_taps(cutoff_hz: float, transition_hz: float):
+    return firdes.low_pass(1.0, IF_RATE, cutoff_hz, transition_hz)
+
+
 def _channel_lpf(cutoff_hz: float, transition_hz: float):
     """Complex low-pass + decimate from IF_RATE to AUDIO_RATE."""
-    taps = firdes.low_pass(1.0, IF_RATE, cutoff_hz, transition_hz)
-    return gr_filter.fir_filter_ccf(DECIM, taps)
+    return gr_filter.fir_filter_ccf(DECIM, _channel_taps(cutoff_hz, transition_hz))
 
 
 class AmDemod(gr.hier_block2):
@@ -30,12 +36,20 @@ class AmDemod(gr.hier_block2):
         gr.hier_block2.__init__(self, "am_demod",
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
                                 gr.io_signature(1, 1, gr.sizeof_float))
-        chan = _channel_lpf(bandwidth_hz / 2, 1_500)
+        self.chan = _channel_lpf(bandwidth_hz / 2, 1_500)
         agc = analog.agc2_cc(attack_rate=0.1, decay_rate=0.002, reference=0.3, gain=1.0)
         mag = blocks.complex_to_mag(1)
         dc = gr_filter.dc_blocker_ff(1024, True)
-        audio_lpf = gr_filter.fir_filter_fff(1, firdes.low_pass(1.0, AUDIO_RATE, 4_500, 1_000))
-        self.connect(self, chan, agc, mag, dc, audio_lpf, self)
+        self.audio_lpf = gr_filter.fir_filter_fff(1, self._audio_taps(bandwidth_hz))
+        self.connect(self, self.chan, agc, mag, dc, self.audio_lpf, self)
+
+    @staticmethod
+    def _audio_taps(bandwidth_hz: float):
+        return firdes.low_pass(1.0, AUDIO_RATE, min(bandwidth_hz / 2 + 500, 6_000), 1_000)
+
+    def set_bandwidth(self, bandwidth_hz: float) -> None:
+        self.chan.set_taps(_channel_taps(bandwidth_hz / 2, 1_500))
+        self.audio_lpf.set_taps(self._audio_taps(bandwidth_hz))
 
 
 class NfmDemod(gr.hier_block2):
@@ -45,13 +59,16 @@ class NfmDemod(gr.hier_block2):
         gr.hier_block2.__init__(self, "nfm_demod",
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
                                 gr.io_signature(1, 1, gr.sizeof_float))
-        chan = _channel_lpf(bandwidth_hz / 2, 2_000)
+        self.chan = _channel_lpf(bandwidth_hz / 2, 2_000)
         self.squelch = analog.pwr_squelch_cc(-100.0, 1e-3, 0, True)
         demod = analog.nbfm_rx(audio_rate=AUDIO_RATE, quad_rate=AUDIO_RATE, tau=75e-6, max_dev=max_dev_hz)
-        self.connect(self, chan, self.squelch, demod, self)
+        self.connect(self, self.chan, self.squelch, demod, self)
 
     def set_squelch(self, db: float) -> None:
         self.squelch.set_threshold(db)
+
+    def set_bandwidth(self, bandwidth_hz: float) -> None:
+        self.chan.set_taps(_channel_taps(bandwidth_hz / 2, 2_000))
 
 
 class WfmDemod(gr.hier_block2):
@@ -69,6 +86,9 @@ class WfmDemod(gr.hier_block2):
     def set_squelch(self, db: float) -> None:
         self.squelch.set_threshold(db)
 
+    def set_bandwidth(self, bandwidth_hz: float) -> None:
+        """Broadcast FM has a single fixed width."""
+
 
 class SsbDemod(gr.hier_block2):
     """USB or LSB. The VFO is the (suppressed) carrier; select one sideband and take the real part."""
@@ -79,32 +99,61 @@ class SsbDemod(gr.hier_block2):
         gr.hier_block2.__init__(self, name,
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
                                 gr.io_signature(1, 1, gr.sizeof_float))
+        self.upper = upper
+        self.low_cut_hz = low_cut_hz
         chan = _channel_lpf(6_000, 2_000)
-        if upper:
-            taps = firdes.complex_band_pass(1.0, AUDIO_RATE, low_cut_hz, high_cut_hz, 200)
-        else:
-            taps = firdes.complex_band_pass(1.0, AUDIO_RATE, -high_cut_hz, -low_cut_hz, 200)
-        bpf = gr_filter.fir_filter_ccc(1, taps)
+        self.bpf = gr_filter.fir_filter_ccc(1, self._taps(high_cut_hz - low_cut_hz))
         agc = analog.agc2_cc(attack_rate=0.5, decay_rate=0.01, reference=0.25, gain=1.0)
         real = blocks.complex_to_real(1)
-        self.connect(self, chan, bpf, agc, real, self)
+        self.connect(self, chan, self.bpf, agc, real, self)
+
+    def _taps(self, bandwidth_hz: float):
+        lo, hi = self.low_cut_hz, self.low_cut_hz + bandwidth_hz
+        if not self.upper:
+            lo, hi = -hi, -lo
+        return firdes.complex_band_pass(1.0, AUDIO_RATE, lo, hi, 200)
+
+    def set_bandwidth(self, bandwidth_hz: float) -> None:
+        self.bpf.set_taps(self._taps(bandwidth_hz))
 
 
 class CwDemod(gr.hier_block2):
-    """CW: shift the carrier to an audible pitch, narrow band-pass, real part."""
+    """CW: shift the carrier to an audible pitch, narrow band-pass, real part.
+
+    Output 0 is the audio (after AGC). Output 1 is the same tone before the AGC, for the
+    Morse decoder: the AGC raises the noise between elements and would hide the keying.
+    """
 
     def __init__(self, pitch_hz: float = config.CW_PITCH_HZ, bandwidth_hz: float = 500) -> None:
         gr.hier_block2.__init__(self, "cw_demod",
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
-                                gr.io_signature(1, 1, gr.sizeof_float))
+                                gr.io_signature(2, 2, gr.sizeof_float))
+        self.pitch_hz = pitch_hz
+        self.bandwidth_hz = bandwidth_hz
         chan = _channel_lpf(3_000, 1_500)
-        rot = blocks.rotator_cc(2.0 * math.pi * pitch_hz / AUDIO_RATE)
-        taps = firdes.complex_band_pass(1.0, AUDIO_RATE, pitch_hz - bandwidth_hz / 2,
-                                        pitch_hz + bandwidth_hz / 2, 100)
-        bpf = gr_filter.fir_filter_ccc(1, taps)
+        self.rot = blocks.rotator_cc(self._phase_inc())
+        self.bpf = gr_filter.fir_filter_ccc(1, self._taps())
         agc = analog.agc2_cc(attack_rate=0.5, decay_rate=0.01, reference=0.25, gain=1.0)
         real = blocks.complex_to_real(1)
-        self.connect(self, chan, rot, bpf, agc, real, self)
+        self.connect(self, chan, self.rot, self.bpf, agc, real, self)
+        self.connect(self.bpf, blocks.complex_to_real(1), (self, 1))
+
+    def _phase_inc(self) -> float:
+        return 2.0 * math.pi * self.pitch_hz / AUDIO_RATE
+
+    def _taps(self):
+        half = self.bandwidth_hz / 2
+        return firdes.complex_band_pass(1.0, AUDIO_RATE, self.pitch_hz - half, self.pitch_hz + half,
+                                        min(100, half))
+
+    def set_bandwidth(self, bandwidth_hz: float) -> None:
+        self.bandwidth_hz = bandwidth_hz
+        self.bpf.set_taps(self._taps())
+
+    def set_pitch(self, pitch_hz: float) -> None:
+        self.pitch_hz = pitch_hz
+        self.rot.set_phase_inc(self._phase_inc())
+        self.bpf.set_taps(self._taps())
 
 
 def build_all() -> dict[str, gr.hier_block2]:

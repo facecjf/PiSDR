@@ -14,6 +14,7 @@ owner expects rather than driving a desktop program through a remote-control soc
 | `docs/02_software_setup.md` | Raspberry Pi OS setup, RTL-SDR V4 driver verification, installing and auto-starting the app |
 | `docs/03_enclosure.md` | Dimensioned spec sheet for the enclosure and the **fit sheet** to fill in before printing |
 | `docs/04_assembly_and_test.md` | Bench test -> test coupon -> full print -> assembly -> thermal/reception test |
+| `docs/05_backlog.md` | What has been added and what is next (multi-band with a second tuner, hardware add-ons) |
 | `software/pisdr/` | The receiver application (`python3 -m pisdr`) |
 | `software/config/bands.json` | Editable band / preset table |
 | `cad/` | Parametric OpenSCAD sources for every printed part plus `export.ps1` to render STLs |
@@ -63,7 +64,7 @@ Full table with notes in `docs/01_hardware.md`.
 +------------------------------------------------------------+---------+
 |                                                            |         |
 |   800 x 480 touchscreen                                    |  (( ))  |  <- EC11 knob
-|   spectrum + waterfall, tap to tune                        |  TUNE   |
+|   spectrum + waterfall, tap a signal to tune it            |  TUNE   |
 |   big frequency readout, tap a digit to pick the step      |         |
 |                                                            |  RTL-SDR|
 |  [ BAND  ] [ MODE  ] [ FUNC  ] [ REC   ]  <- soft-key bar  |   V4    |
@@ -76,13 +77,23 @@ Full table with notes in `docs/01_hardware.md`.
   labels them, so their meaning can change with context.
 - Default page: `BAND / MODE / FUNC / MEM`. `FUNC` cycles what the knob controls
   (TUNE -> VOLUME -> SQUELCH -> GAIN, returning to TUNE after a few seconds idle).
-- `MEM` opens saved frequencies; long-press `MEM` starts a band (or memory) scan.
-- In `CW` mode a Morse decoder strip shows decoded text and the sender's WPM.
-  While scanning the keys become `HOLD / SKIP / BAND|MEM / STOP`.
+- `MEM` opens saved frequencies (filter by group or "ON NOW" schedule); long-press `MEM`
+  starts a band (or memory) scan. While scanning the keys become `HOLD / SKIP / BAND|MEM / STOP`;
+  long-press `SKIP` locks the channel out. A priority channel can be checked while scanning,
+  and every hold goes into a scan log.
+- In `CW` mode a Morse decoder strip shows decoded text and the sender's WPM. On FM
+  broadcast an RDS strip shows the station name and radio text (with `gr-rds`), and a
+  `multimon-ng` strip decodes APRS, POCSAG, FLEX, EAS or DTMF.
+- The spectrum marks detected signals with their level, labels known frequencies (memories,
+  FM names learned from RDS, a built-in list), zooms to ×64 and has `◀ − + ▶` buttons to
+  zoom and seek signal to signal. A tap near a signal snaps to it.
 - Below 30 MHz an **HF conditions** panel (SFI/SSN/A/K, band conditions, 24 h Kp, local
   weather) sits beside the spectrum; the `☀ SFI K` chip in the top bar toggles it.
-- Encoder push cycles the tuning step (10 Hz ... 1 MHz). Long-press `FUNC` opens the
-  two-column Settings page (radio, audio DSP, display incl. four colour themes, system).
+- Encoder push cycles the tuning step (10 Hz ... 1 MHz). Long-press `FUNC` opens Settings,
+  in five tabs: RADIO (filter widths, PPM, S-meter cal, CW pitch, decoders), AUDIO (DSP,
+  recordings browser, record timer), DISPLAY (themes, brightness/dimming, UTC clock, knob
+  acceleration, spectrum zoom/averaging/peak hold/style/colours/labels), SCAN (timing, priority, lockouts, log)
+  and SYSTEM (presets, rtl_tcp network mode, shutdown).
 
 ## Build order
 

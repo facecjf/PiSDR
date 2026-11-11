@@ -91,6 +91,22 @@ def check_radio() -> int:
         GnuRadioBackend(RadioState())
         return "GnuRadioBackend constructed"
 
+    def optional_extras():
+        from . import sysinfo
+        from .backlight import Backlight
+        bl = Backlight()
+        found = {
+            "gr-rds (RDS)": sysinfo.have_module("rds"),
+            "multimon-ng (decoders)": sysinfo.have_tool("multimon-ng"),
+            "rtl_tcp (network mode)": sysinfo.have_tool("rtl_tcp"),
+            "backlight": bl.available and bl.writable,
+        }
+        for name, have in found.items():
+            print(f"\n    {name}: {'yes' if have else 'no'}", end="")
+        print()
+        missing = [n for n, have in found.items() if not have]
+        return "all present" if not missing else "optional, re-run install.sh to add: " + ", ".join(missing)
+
     print("PiSDR radio check")
     step("rtl_test", rtl_test)
     step("gnuradio", import_gr)
@@ -99,6 +115,9 @@ def check_radio() -> int:
     step("demodulators", build_demods)
     step("audio", open_audio)
     step("full backend", build_backend)
+    radio_ok = ok
+    step("extras", optional_extras)
+    ok = radio_ok
     print("\nAll good - the app will use the real radio." if ok else
           "\nFix the first FAILED step above; until then the app falls back to the simulator.")
     return 0 if ok else 1
