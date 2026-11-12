@@ -52,7 +52,7 @@ class RadioState(QObject):
                  "agc", "bias_tee", "band_index", "fft_fps", "waterfall_speed",
                  "dsp_hpf", "dsp_hpf_hz", "dsp_lpf", "dsp_lpf_hz",
                  "dsp_notch", "dsp_notch_hz", "dsp_nr_level", "dsp_nb_level", "theme",
-                 "hf_panel", "wx_lat", "wx_lon", "wx_units",
+                 "hf_panel", "wx_lat", "wx_lon", "wx_zip", "wx_units",
                  "filter_index", "ppm", "smeter_cal_db", "cw_pitch_hz",
                  "scan_dwell_ms", "scan_resume_ms", "scan_floor_db", "lockouts",
                  "memory_group", "memory_scan_on_now", "priority", "priority_interval_s",
@@ -97,8 +97,9 @@ class RadioState(QObject):
         self.cw_wpm: float = 0.0
         self.theme: str = config.DEFAULT_THEME
         self.hf_panel: str = "AUTO"        # OFF / ON / AUTO (shown while tuned below 30 MHz)
-        self.wx_lat: float | None = None   # weather location; None = IP geolocation
+        self.wx_lat: float | None = None   # where the radio is (weather, ADS-B map); None = IP geolocation
         self.wx_lon: float | None = None
+        self.wx_zip: str = ""              # the ZIP code that location was entered as, if it was
         self.wx_units: str = "imperial"    # or "metric"
         self.space_wx = None               # spacewx.SpaceWx, set by the fetcher
 
@@ -504,6 +505,23 @@ class RadioState(QObject):
         self.space_wx = data
         self.changed.emit("space_wx")
 
+    def set_location(self, lat: float, lon: float, zip_code: str = "") -> bool:
+        """Say where the radio is (for the weather and the ADS-B map). False if that is nowhere."""
+        lat, lon = _coordinate(lat, 90.0), _coordinate(lon, 180.0)
+        if lat is None or lon is None:
+            return False
+        self.wx_lat, self.wx_lon, self.wx_zip = lat, lon, _zip_code(zip_code)
+        self.changed.emit("location")
+        self._save_timer.start()
+        return True
+
+    def clear_location(self) -> None:
+        """Forget the entered location: back to the one guessed from the IP address."""
+        self.wx_lat = self.wx_lon = None
+        self.wx_zip = ""
+        self.changed.emit("location")
+        self._save_timer.start()
+
     # ------------------------------------------------------------------ CW decoder
     def append_cw_text(self, text: str) -> None:
         if not text:
@@ -879,6 +897,7 @@ class RadioState(QObject):
         self.wx_units = _choice(self.wx_units, ("imperial", "metric"), "imperial")
         lat, lon = _coordinate(self.wx_lat, 90.0), _coordinate(self.wx_lon, 180.0)
         self.wx_lat, self.wx_lon = (lat, lon) if lat is not None and lon is not None else (None, None)
+        self.wx_zip = _zip_code(self.wx_zip) if self.wx_lat is not None else ""
 
         filt = dict(config.DEFAULT_FILTER_INDEX)
         if isinstance(self.filter_index, dict):
@@ -943,6 +962,11 @@ def _coordinate(value, limit: float) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value) if -limit <= value <= limit else None
+
+
+def _zip_code(value) -> str:
+    """A 5-digit US ZIP code as text, or "" for anything else."""
+    return value if isinstance(value, str) and len(value) == 5 and value.isascii() and value.isdigit() else ""
 
 
 def _valid_target(value) -> dict | None:

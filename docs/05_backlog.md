@@ -15,9 +15,10 @@ Everything here runs on the single V4; user-facing details are in `docs/02_softw
 - **Recording**: recordings browser with playback through the radio's audio, and a UTC record timer (once or daily) that tunes, records and tunes back. Recordings are taken before the volume control.
 - **Decoders**: RDS (PS / PTY / RT) on FM broadcast via optional `gr-rds`; APRS, POCSAG, FLEX, EAS and DTMF via `multimon-ng`.
 - **Network mode**: hands the dongle to `rtl_tcp` on port 1234 and takes it back.
+- **Location by ZIP code**: Settings → SYSTEM → Location ▸ takes a 5-digit US ZIP code on a number pad and looks it up in a bundled table (GeoNames, CC BY 4.0), with no network needed. It sets the location for the weather and the centre of the ADS-B map; AUTO returns to the IP address guess.
 - **ADS-B aircraft map**: picking the ADS-B 1090 band lends the dongle to `dump1090` and shows a radar-style plot (range rings, coastlines and borders, callsigns, altitudes, trails) with a list of the nearest aircraft. `install.sh` builds the decoder; no service, no network ports.
 - **Robustness**: settings, memories, tags and the scan log are saved atomically and damaged files are set aside as `*.corrupt` instead of being overwritten; each bad setting falls back on its own; a bug in a handler shows a message instead of closing the program; SIGTERM / poweroff saves and finalises a recording; recordings stop before the card fills.
-- **Test suite** (`software/tests/`, about 380 tests, PyQt5 and PyQt6) and a screenshot tool (`software/tools/screenshots.py`). See "Developing on a PC" in the README.
+- **Test suite** (`software/tests/`, about 420 tests, PyQt5 and PyQt6) and a screenshot tool (`software/tools/screenshots.py`). See "Developing on a PC" in the README.
 - **Fixes found by the tests**: BAND stuck on "HF utility" (and picking 40 m, 20 m, 31 m or WWV selected "HF utility" instead, so band scan covered 3–18 MHz); releasing a manual scan HOLD did not resume; a refused timer recording left the radio on the timer's frequency; "00:00-24:00" schedules were never on; the CW decoder printed stray `E`s on noise; a changed web feed or damaged cache could stop the HF conditions panel being built.
 
 ## 1. Multi-band

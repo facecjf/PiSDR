@@ -18,6 +18,7 @@ owner expects rather than driving a desktop program through a remote-control soc
 | `software/pisdr/` | The receiver application (`python3 -m pisdr`) |
 | `software/config/bands.json` | Editable band / preset table |
 | `software/config/outlines.npz` | Coastlines, lakes and borders for the ADS-B map (Natural Earth, public domain; rebuilt by `software/tools/build_outlines.py`) |
+| `software/config/zipcodes.npz` | US ZIP code -> town and position, for Settings → SYSTEM → Location (from [GeoNames](https://www.geonames.org), CC BY 4.0; rebuilt by `software/tools/build_zipcodes.py`) |
 | `software/tests/` | Test suite (`python -m pytest`); runs on a PC with no radio or display |
 | `software/tools/screenshots.py` | Renders the screenshots in `docs/images/` from the simulator |
 | `cad/` | Parametric OpenSCAD sources for every printed part plus `export.ps1` to render STLs |
@@ -111,7 +112,7 @@ HF conditions numbers and the aircraft in them are sample values.
   in five tabs: RADIO (filter widths, PPM, S-meter cal, CW pitch, decoders), AUDIO (DSP,
   recordings browser, record timer), DISPLAY (themes, brightness/dimming, UTC clock, knob
   acceleration, spectrum zoom/averaging/peak hold/style/colours/labels), SCAN (timing, priority, lockouts, log)
-  and SYSTEM (presets, rtl_tcp network mode, ADS-B map, shutdown).
+  and SYSTEM (presets, rtl_tcp network mode, ADS-B map, your location by ZIP code, shutdown).
 
 ## Build order
 
@@ -143,9 +144,9 @@ cd software
 python -m pytest
 ```
 
-About 380 tests in about a minute, with no radio, display or network. They cover the
+About 420 tests in about a minute, with no radio, display or network. They cover the
 settings and memory files (including damaged ones), tuning, scanning, the record timer,
-signal detection, the Morse decoder, the ADS-B map, and every page of the UI including a few
+signal detection, the Morse decoder, the ADS-B map, the ZIP code table, and every page of the UI including a few
 thousand random key presses, knob turns and taps. The real flowgraph code in
 `pisdr/radio/flowgraph.py` is exercised against a stand-in for GNU Radio
 (`tests/fakegr.py`) that records which blocks are connected to which; this checks the

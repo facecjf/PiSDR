@@ -1,4 +1,4 @@
-"""Secondary pages: band picker, mode picker, numeric keypad and memories.
+"""Secondary pages: band picker, mode picker, numeric keypad, location (ZIP code) and memories.
 
 Every page implements the small :class:`Page` protocol so the main window can route the
 physical controls (four keys, encoder turn, encoder push) without knowing what is shown.
@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import time
 
-from .. import adsb, config
+from .. import adsb, config, zipcodes
 from ..qt import Qt, QtWidgets, Signal
 from ..state import RadioState, format_step
 from . import style
@@ -275,6 +275,138 @@ class Keypad(Page):
 
     def on_encoder_push(self) -> bool:
         self.commit(1e6)
+        return True
+
+
+# --------------------------------------------------------------------------- location
+class LocationPage(Page):
+    """Where the radio is, entered as a US ZIP code (Settings > SYSTEM > Location).
+
+    The location is used for the local weather and as the centre of the ADS-B map. AUTO
+    goes back to the one guessed from the IP address.
+    """
+
+    return_to = "settings"
+    DIGITS = 5
+
+    def __init__(self, state: RadioState, parent=None) -> None:
+        super().__init__(parent)
+        self.state = state
+        self.entry = ""
+        self.match: tuple[float, float, str] | None = None
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(24, 6, 24, 6)
+        layout.setSpacing(24)
+
+        left = QtWidgets.QVBoxLayout()
+        left.setSpacing(8)
+        title = QtWidgets.QLabel("LOCATION  \u00b7  US ZIP CODE")
+        title.setObjectName("title")
+        self.display = QtWidgets.QLabel("")
+        self.display.setObjectName("entry")
+        self.display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.display.setMinimumHeight(60)
+        self.result = QtWidgets.QLabel("")
+        self.result.setObjectName("hint")
+        self.result.setWordWrap(True)
+        self.result.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.current = QtWidgets.QLabel("")
+        self.current.setObjectName("info")
+        self.current.setWordWrap(True)
+        left.addWidget(title)
+        left.addWidget(self.display)
+        left.addWidget(self.result, 1)
+        left.addWidget(self.current)
+        layout.addLayout(left, 1)
+
+        grid = QtWidgets.QGridLayout()
+        grid.setSpacing(6)
+        keys = [("7", 0, 0), ("8", 0, 1), ("9", 0, 2),
+                ("4", 1, 0), ("5", 1, 1), ("6", 1, 2),
+                ("1", 2, 0), ("2", 2, 1), ("3", 2, 2),
+                ("CLR", 3, 0), ("0", 3, 1), ("<-", 3, 2)]
+        for text, r, c in keys:
+            btn = QtWidgets.QPushButton(text)
+            btn.setObjectName("keypad")
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn.setMinimumWidth(104)
+            btn.clicked.connect(lambda _=False, t=text: self.key(t))
+            grid.addWidget(btn, r, c)
+        layout.addLayout(grid, 0)
+        state.changed.connect(self._on_state_changed)
+        self._refresh()
+
+    def on_shown(self) -> None:
+        self.entry = ""
+        self._refresh()
+
+    def _on_state_changed(self, field: str) -> None:
+        if field in ("location", "space_wx") and self.isVisible():
+            self._refresh()
+
+    def key(self, text: str) -> None:
+        if text == "<-":
+            self.entry = self.entry[:-1]
+        elif text == "CLR":
+            self.entry = ""
+        elif text.isdigit() and len(self.entry) < self.DIGITS:
+            self.entry += text
+        self._refresh()
+
+    def _refresh(self) -> None:
+        had_match = self.match is not None
+        self.match = zipcodes.lookup(self.entry) if len(self.entry) == self.DIGITS else None
+        self.display.setText(self.entry + "_" * (self.DIGITS - len(self.entry)))
+        if not zipcodes.available():
+            self.result.setText("The ZIP code table (config/zipcodes.npz) is missing. "
+                                "Set wx_lat and wx_lon in settings.json instead.")
+        elif self.match is not None:
+            lat, lon, town = self.match
+            self.result.setText(f"<span style='color:{style.TEXT}'><b>{town}</b></span><br>"
+                                f"{zipcodes.coordinates_text(lat, lon)}<br>Press SET to use it.")
+        elif len(self.entry) == self.DIGITS:
+            self.result.setText(f"No ZIP code {self.entry} in the table. Try a neighbouring one.")
+        else:
+            self.result.setText("Enter the 5 digits of a US ZIP code. It sets the local weather "
+                                "and the centre of the ADS-B map.")
+        self.current.setText(f"<span style='color:{style.TEXT_DIM}'>Now:</span> {self._current_text()}")
+        if had_match != (self.match is not None):
+            self.softkeys_changed.emit()
+
+    def _current_text(self) -> str:
+        if self.state.wx_lat is not None:
+            return zipcodes.label(self.state)
+        wx = getattr(self.state.space_wx, "wx", None) or {}
+        guess = wx.get("city") if wx.get("geo") == "ip" else ""
+        return f"automatic, from your IP address ({guess})" if guess else "automatic, from your IP address"
+
+    def commit(self) -> None:
+        if self.match is None:
+            self.state.message.emit("Enter a 5-digit ZIP code first")
+            return
+        lat, lon, town = self.match
+        self.state.set_location(lat, lon, self.entry)
+        self.state.message.emit(f"Location: {self.entry} {town}")
+        self.done.emit()
+
+    def softkey_labels(self) -> list[str]:
+        return ["AUTO", "", "SET" if self.match is not None else "", "BACK"]
+
+    def on_softkey(self, index: int) -> None:
+        if index == 0:
+            self.state.clear_location()
+            self.state.message.emit("Location: automatic (IP address)")
+            self.done.emit()
+        elif index == 2:
+            self.commit()
+        elif index == 3:
+            self.done.emit()
+
+    def on_knob(self, detents: int) -> bool:
+        return True
+
+    def on_encoder_push(self) -> bool:
+        self.commit()
         return True
 
 

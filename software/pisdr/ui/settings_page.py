@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-from .. import config, sysinfo
+from .. import config, sysinfo, zipcodes
 from ..qt import Qt, QtWidgets, Signal
 from ..state import RadioState
 from . import style
@@ -76,7 +76,7 @@ def _short(text: str, n: int = 16) -> str:
 
 class SettingsPage(Page):
     quit_requested = Signal()
-    open_page = Signal(str)       # "recordings", "scan_log", "network", "adsb"
+    open_page = Signal(str)       # "recordings", "scan_log", "network", "adsb", "location"
 
     TABS = ("RADIO", "AUDIO", "DISPLAY", "SCAN", "SYSTEM")
     IGNORED_FIELDS = {"signal_db", "cw_text", "cw_wpm", "decoder_lines", "rds", "space_wx", "aircraft"}
@@ -245,6 +245,8 @@ class SettingsPage(Page):
                  lambda d: self.open_page.emit("network") if d == 0 else None, action=True),
             _Row("ADS-B aircraft map", lambda: "\u25b8",
                  lambda d: self.open_page.emit("adsb") if d == 0 else None, action=True),
+            _Row("Location", lambda: f"{zipcodes.label(s)} \u25b8",
+                 lambda d: self.open_page.emit("location") if d == 0 else None, action=True),
             _Row("Exit PiSDR", lambda: "", lambda d: self.quit_requested.emit() if d == 0 else None, action=True),
             _Row("Shut down Pi", lambda: "",
                  lambda d: self._confirmed("shutdown", self._shutdown) if d == 0 else None, action=True),

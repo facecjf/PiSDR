@@ -19,7 +19,7 @@ from .freq_display import FreqDisplay, SMeter
 from .hf_panel import HfPanel
 from .info_strips import DecoderPanel, RdsPanel
 from .list_pages import NetworkPage, RecordingsPage, ScanLogPage
-from .pickers import BandPicker, Keypad, MemoriesPage, ModePicker, Page
+from .pickers import BandPicker, Keypad, LocationPage, MemoriesPage, ModePicker, Page
 from .settings_page import SettingsPage
 from .softkeys import SoftKeyBar
 from .spectrum import SpectrumWaterfall
@@ -122,7 +122,7 @@ class MainPage(Page):
 
 class MainWindow(QtWidgets.QMainWindow):
     (PAGE_MAIN, PAGE_BAND, PAGE_MODE, PAGE_KEYPAD, PAGE_SETTINGS, PAGE_MEMORIES,
-     PAGE_RECORDINGS, PAGE_SCAN_LOG, PAGE_NETWORK, PAGE_ADSB) = range(10)
+     PAGE_RECORDINGS, PAGE_SCAN_LOG, PAGE_NETWORK, PAGE_ADSB, PAGE_LOCATION) = range(11)
 
     _ACTIVITY_EVENTS = (QtCore.QEvent.Type.MouseButtonPress, QtCore.QEvent.Type.TouchBegin,
                         QtCore.QEvent.Type.KeyPress, QtCore.QEvent.Type.Wheel)
@@ -183,9 +183,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.scan_log_page = ScanLogPage(state)
         self.network_page = NetworkPage(state, backend)
         self.adsb_page = AdsbPage(state, backend)
+        self.location_page = LocationPage(state)
         pages = (self.main_page, self.band_page, self.mode_page, self.keypad_page, self.settings_page,
                  self.memories_page, self.recordings_page, self.scan_log_page, self.network_page,
-                 self.adsb_page)
+                 self.adsb_page, self.location_page)
         for page in pages:
             self.stack.addWidget(page)
             page.done.connect(lambda p=page: self._page_done(p))
@@ -304,6 +305,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.show_page(self.PAGE_RECORDINGS)
         elif name == "scan_log":
             self.show_page(self.PAGE_SCAN_LOG)
+        elif name == "location":
+            self.show_page(self.PAGE_LOCATION)
 
     def _enter_network(self) -> None:
         self.scanner.stop()
@@ -563,6 +566,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.key_long_pressed(index) if shift else self.key_pressed(index)
         elif key == _kv(Qt.Key.Key_Escape):
             self.show_main()
+        elif self.stack.currentIndex() == self.PAGE_LOCATION and _kv(Qt.Key.Key_0) <= key <= _kv(Qt.Key.Key_9):
+            self.location_page.key(chr(key))
         elif _kv(Qt.Key.Key_0) <= key <= _kv(Qt.Key.Key_9) or key == _kv(Qt.Key.Key_Period):
             if self.stack.currentIndex() != self.PAGE_KEYPAD:
                 self.show_page(self.PAGE_KEYPAD)

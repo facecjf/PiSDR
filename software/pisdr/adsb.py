@@ -170,11 +170,14 @@ def middle_of(aircraft: list[Aircraft]) -> tuple[float, float] | None:
 
 
 def receiver_position(state) -> tuple[float, float, str] | None:
-    """Where the radio is: (lat, lon, "settings") from ``wx_lat`` / ``wx_lon`` in settings.json,
-    else (lat, lon, "ip") from the weather feed's IP geolocation (city-level), else None."""
+    """Where the radio is: (lat, lon, "settings") if a location was entered (Settings > SYSTEM >
+    Location, or ``wx_lat`` / ``wx_lon`` in settings.json), else (lat, lon, "ip") from the
+    weather feed's IP geolocation (city-level), else None."""
     if state.wx_lat is not None and state.wx_lon is not None:
         return float(state.wx_lat), float(state.wx_lon), "settings"
     wx = getattr(state.space_wx, "wx", None) or {}
+    if wx.get("geo") == "settings":
+        return None            # weather fetched for an entered location that has since been cleared
     lat, lon = _number(wx.get("lat"), -90.0, 90.0), _number(wx.get("lon"), -180.0, 180.0)
     if lat is not None and lon is not None:
         return lat, lon, "ip"

@@ -41,7 +41,7 @@ def test_window_is_the_size_of_the_panel(window):
     assert colours > 50 and brightness > 5
 
 
-@pytest.mark.parametrize("page", range(8))
+@pytest.mark.parametrize("page", [*range(8), 10])       # 8 and 9 hold the dongle: tested on their own
 def test_every_page_opens_draws_and_returns(window, qapp, page):
     window.show_page(page)
     pump(qapp, 0.05)
@@ -488,7 +488,7 @@ def test_random_session(window, qapp, seed, monkeypatch):
                            rng.choice([Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.ShiftModifier]))),
         (6, tap_spectrum),
         (12, tap_anywhere),
-        (4, lambda: window.show_page(rng.randrange(8))),
+        (4, lambda: window.show_page(rng.choice([*range(8), window.PAGE_LOCATION]))),
         (1, window._enter_adsb),
         (3, lambda: spectrum.seek(rng.choice([-1, 1]))),
         (2, lambda: state.set_signal_db(rng.uniform(-120, -20))),

@@ -161,7 +161,7 @@ selection and walk across tabs; long-press **UP/DOWN** jumps a whole tab. Rows e
 | AUDIO | Volume, Noise reduction, Noise blanker, Notch, High-pass, Low-pass; Record now, Recordings ▸, Timer start / length / repeat, Timer (arm) |
 | DISPLAY | Theme, Brightness, Dim after, Clock (LOCAL/UTC), Knob acceleration, Tap snaps to signal, HF conditions panel; Spectrum rate, Waterfall speed, Zoom, Averaging, Peak hold, Trace style, Waterfall colours, Labels |
 | SCAN | Dwell per channel, Resume after, Trigger level, Memory group, ON NOW only; Priority channel, Priority check every, Lockouts (CLEAR), Scan log ▸ |
-| SYSTEM | Load HF presets, Network mode (rtl_tcp) ▸, ADS-B aircraft map ▸, Exit PiSDR, Shut down Pi; an info panel with the radio backend, IP address, which optional tools are installed, the backlight device and the recordings folder |
+| SYSTEM | Load HF presets, Network mode (rtl_tcp) ▸, ADS-B aircraft map ▸, Location ▸, Exit PiSDR, Shut down Pi; an info panel with the radio backend, IP address, which optional tools are installed, the backlight device and the recordings folder |
 
 Destructive rows (clear lockouts, shut down) ask for a second press within 3 s.
 
@@ -373,13 +373,29 @@ panel** chooses `AUTO` (default: shown below 30 MHz), `ON` or `OFF`.
 Data comes from `hamqsl.com` (hourly), NOAA SWPC (every 10 min) and Open-Meteo (every
 15 min) over the Pi's Wi-Fi; no API keys. The last good values are cached in
 `~/.config/pisdr/spacewx.json` so the panel is populated at boot even without a network.
-Weather location defaults to IP geolocation; to fix it, add to `settings.json`:
+**Your location.** Until you set one, the weather is for the place your internet address
+appears to be in, which can be a town or two away. Settings → SYSTEM → **Location ▸**
+opens a number pad: type your 5-digit US ZIP code, check the town that appears under it,
+and press `SET` (or push the knob). `AUTO` goes back to the IP address guess; `BACK`
+leaves it as it was. The weather is fetched again at once, and the ADS-B map (section 5f)
+uses the same location.
+
+The ZIP code is looked up in a table that ships with the app
+(`software/config/zipcodes.npz`: about 41,000 codes for the states, DC, Puerto Rico, the
+US Virgin Islands, Guam, American Samoa and the Northern Marianas), so it works with no
+network. The position is that of the ZIP code area, not of your house: usually within
+a few miles, more in large rural ZIP codes. The table comes from [GeoNames](https://www.geonames.org) and is
+licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/);
+`python3 tools/build_zipcodes.py` downloads the current files and rebuilds it.
+
+Outside the US, or for an exact position, exit PiSDR and put the coordinates in
+`~/.config/pisdr/settings.json` (the app rewrites that file while it runs):
 
 ```json
 "wx_lat": 43.04, "wx_lon": -87.91, "wx_units": "imperial"
 ```
 
-(`"metric"` gives °C and km/h.)
+(`"metric"` gives °C and km/h. The Location row then shows the coordinates.)
 
 ## 5d. Recording, playback and the record timer
 
@@ -444,9 +460,11 @@ from the band picker, where you were if you came from Settings).
 | Tap | An aircraft or a list row selects it; empty sky clears the selection |
 | `BACK` | Stop the decoder and return to the radio |
 
-**Your location.** The map is centred on the same location as the weather: `"wx_lat"` and
-`"wx_lon"` in `~/.config/pisdr/settings.json` (section 5c). Set them for correct rings,
-distances and bearings. Without them the location guessed from your IP address is used and
+**Your location.** The map is centred on the same location as the weather: the ZIP code
+entered in Settings → SYSTEM → **Location ▸**, or `"wx_lat"` and `"wx_lon"` in
+`~/.config/pisdr/settings.json` (section 5c). Set one for correct rings, distances and
+bearings; a ZIP code usually puts the centre within a few miles of you, the coordinates exactly.
+Without either the location guessed from your IP address is used and
 a note at the bottom of the map says so: that can be tens of kilometres out, which moves
 the centre marker and every distance by as much (the aircraft and the coastlines are still
 drawn in the right place relative to each other). With no location at all the map centres

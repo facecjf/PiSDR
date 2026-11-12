@@ -22,7 +22,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from . import config, storage
+from . import config, storage, zipcodes
 from .qt import QObject, QTimer, Signal
 
 log = logging.getLogger(__name__)
@@ -252,6 +252,8 @@ class SpaceWxFetcher(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(15_000)
         self._timer.timeout.connect(self._tick)
+        self._moved = False              # the location changed while a fetch was under way
+        state.changed.connect(self._on_state_changed)
         state.set_space_wx(self.data)
 
     def start(self) -> None:
@@ -265,6 +267,13 @@ class SpaceWxFetcher(QObject):
         self._next_try = {key: 0.0 for key in self._next_try}
         self._tick()
 
+    def _on_state_changed(self, field: str) -> None:
+        if field == "location":                    # the weather is for somewhere else now
+            self._next_try["wx"] = 0.0
+            self._moved = self._busy
+            if self._timer.isActive():
+                self._tick()
+
     # ------------------------------------------------------------------ scheduling
     def _tick(self) -> None:
         if self._busy:
@@ -276,9 +285,11 @@ class SpaceWxFetcher(QObject):
         self._busy = True
         lat, lon = self.state.wx_lat, self.state.wx_lon
         units = self.state.wx_units
-        threading.Thread(target=self._work, args=(due, lat, lon, units), daemon=True, name="spacewx").start()
+        town = zipcodes.place(self.state)
+        threading.Thread(target=self._work, args=(due, lat, lon, units, town), daemon=True,
+                         name="spacewx").start()
 
-    def _work(self, keys: list[str], lat, lon, units: str) -> None:
+    def _work(self, keys: list[str], lat, lon, units: str, town: str = "") -> None:
         for key in keys:
             try:
                 if key == "solar":
@@ -286,13 +297,13 @@ class SpaceWxFetcher(QObject):
                 elif key == "kp":
                     payload = {"kp_history": parse_kp_json(fetch_text(config.SPACEWX_KP_URL))}
                 else:
-                    payload = {"wx": self._fetch_weather(lat, lon, units)}
+                    payload = {"wx": self._fetch_weather(lat, lon, units, town)}
                 self._result.emit(key, payload, "")
             except Exception as exc:  # network down, DNS, bad payload - never crash the radio
                 self._result.emit(key, None, f"{type(exc).__name__}: {exc}")
         self._finished.emit()
 
-    def _fetch_weather(self, lat, lon, units: str) -> dict[str, Any]:
+    def _fetch_weather(self, lat, lon, units: str, town: str = "") -> dict[str, Any]:
         city = self.data.wx.get("city", "") if self.data.wx else ""
         if lat is None or lon is None:
             cached = self.data.wx or {}
@@ -306,7 +317,7 @@ class SpaceWxFetcher(QObject):
             source = "ip"
         else:
             source = "settings"
-            city = ""
+            city = town
         imperial = units == "imperial"
         url = config.SPACEWX_WX_URL.format(
             lat=lat, lon=lon,
@@ -333,3 +344,8 @@ class SpaceWxFetcher(QObject):
 
     def _on_finished(self) -> None:
         self._busy = False
+        if self._moved:                            # what just arrived was for the old location
+            self._moved = False
+            self._next_try["wx"] = 0.0
+            if self._timer.isActive():
+                self._tick()

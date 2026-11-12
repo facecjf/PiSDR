@@ -160,6 +160,7 @@ ADSB_TRAIL_POINTS = 180        # positions remembered per aircraft for its trail
 ADSB_PANEL_W = 268             # aircraft list beside the map
 ADSB_SIM_HOME = (43.04, -87.91)   # where the simulator's traffic flies if no location is set
 OUTLINES_FILE = SOFTWARE_DIR / "config" / "outlines.npz"   # coastlines and borders for the map
+ZIPCODES_FILE = SOFTWARE_DIR / "config" / "zipcodes.npz"   # US ZIP code -> location (Settings > Location)
 
 # Post-demod audio DSP. HPF/LPF/notch are IIR biquads (C++); NR/NB are Python blocks that
 # are only spliced into the audio path while their level is > 0.

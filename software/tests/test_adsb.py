@@ -150,6 +150,8 @@ def test_where_the_receiver_is(state):
     assert adsb.receiver_position(state) == (51.5, -0.1, "ip")
     state.space_wx = types.SimpleNamespace(wx={"lat": "north", "lon": 400})
     assert adsb.receiver_position(state) is None
+    state.space_wx = types.SimpleNamespace(wx={"lat": 51.5, "lon": -0.1, "geo": "settings"})
+    assert adsb.receiver_position(state) is None, "weather for a location since cleared is not an IP guess"
     state.wx_lat, state.wx_lon = HOME
     assert adsb.receiver_position(state) == (*HOME, "settings")
 

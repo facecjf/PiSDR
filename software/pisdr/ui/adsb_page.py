@@ -307,8 +307,8 @@ class RadarView(QtWidgets.QWidget):
         p.setFont(_font(12, bold=True))
         p.setPen(QtGui.QColor(style.ACCENT))
         p.drawText(QtCore.QPointF(8, 17), f"{self.state.adsb_range_nm} nm")
-        note = {"ip": "Centre: location from your IP address (approximate)",
-                "traffic": "Centred on the traffic (your location is not set)"
+        note = {"ip": "Approximate centre, from your IP address - set a ZIP code in Settings > SYSTEM",
+                "traffic": "Centred on the traffic - set a ZIP code in Settings > SYSTEM > Location"
                 }.get(self.centre_source, "")
         if note:
             p.setFont(_font(11))

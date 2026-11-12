@@ -48,6 +48,7 @@ def assert_sane(s: RadioState) -> None:
     for key in ("agc", "bias_tee", "dsp_hpf", "peak_hold", "knob_accel", "timer_armed", "rds_enabled"):
         assert type(getattr(s, key)) is bool, key
     assert (s.wx_lat is None) == (s.wx_lon is None)
+    assert s.wx_zip == "" or (s.wx_lat is not None and len(s.wx_zip) == 5 and s.wx_zip.isdigit())
     assert all(config.FREQ_MIN <= hz <= config.FREQ_MAX for hz in s.lockouts)
     for target in (s.priority, s.timer_target):
         assert target is None or config.FREQ_MIN <= target["vfo_hz"] <= config.FREQ_MAX
