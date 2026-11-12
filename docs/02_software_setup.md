@@ -66,6 +66,7 @@ sudo apt install -y gr-rds      # optional: RDS station name / radio text on FM 
 
 `multimon-ng` drives the data decoders (APRS, POCSAG, FLEX, EAS, DTMF). `gr-rds` is
 optional; without it the RDS setting shows "not installed" and everything else works.
+The ADS-B map needs `dump1090`, which `install.sh` builds (section 5f).
 
 `python3-pyqtgraph` may pull in PyQt6 and prefer it over PyQt5; both work. The two
 `*wayland*` packages give each Qt generation its Wayland platform plugin, which the
@@ -121,7 +122,8 @@ cd ~/PiSDR/software && python3 -m pisdr
 (The user must already be logged in to the desktop on the Pi; `ls $XDG_RUNTIME_DIR` should
 list `wayland-0`. If it lists `wayland-1` instead, use that name.)
 
-`Ctrl+Q` or the EXIT soft key on the settings page quits.
+`Ctrl+Q` or **Exit PiSDR** on the Settings SYSTEM tab quits; `Ctrl+C` in the terminal,
+`sudo reboot` and a normal shutdown also close it cleanly (settings saved, recording finalised).
 
 ## 5. Audio output
 
@@ -159,7 +161,7 @@ selection and walk across tabs; long-press **UP/DOWN** jumps a whole tab. Rows e
 | AUDIO | Volume, Noise reduction, Noise blanker, Notch, High-pass, Low-pass; Record now, Recordings ▸, Timer start / length / repeat, Timer (arm) |
 | DISPLAY | Theme, Brightness, Dim after, Clock (LOCAL/UTC), Knob acceleration, Tap snaps to signal, HF conditions panel; Spectrum rate, Waterfall speed, Zoom, Averaging, Peak hold, Trace style, Waterfall colours, Labels |
 | SCAN | Dwell per channel, Resume after, Trigger level, Memory group, ON NOW only; Priority channel, Priority check every, Lockouts (CLEAR), Scan log ▸ |
-| SYSTEM | Load HF presets, Network mode (rtl_tcp) ▸, Exit PiSDR, Shut down Pi; an info panel with the radio backend, IP address, which optional tools are installed, the backlight device and the recordings folder |
+| SYSTEM | Load HF presets, Network mode (rtl_tcp) ▸, ADS-B aircraft map ▸, Exit PiSDR, Shut down Pi; an info panel with the radio backend, IP address, which optional tools are installed, the backlight device and the recordings folder |
 
 Destructive rows (clear lockouts, shut down) ask for a second press within 3 s.
 
@@ -258,6 +260,10 @@ hand-sent code produces partial copy. Decoding runs on a 1 kHz envelope produced
 blocks, so it has no effect on audio quality. The simulator sends a looping `CQ` so you
 can test the display without a dongle.
 
+A single dit or dah on its own (what static crashes look like to a decoder) is not printed,
+so an empty channel stays nearly blank instead of filling with `E` and `T`. The price is
+that a lone `E` or `T` sent as a whole word is dropped too.
+
 ## 5a-iii. Data decoders (multimon-ng)
 
 Settings → RADIO → **Data decoder** cycles `OFF / APRS / POCSAG / FLEX / EAS / DTMF`. The
@@ -346,6 +352,11 @@ schedule to presets you loaded before (groups `RU MARKERS`, `MIL AIR`, `VOLMET`,
 antenna (long wire or loop) — the whip will hear almost nothing — and keep RF gain around
 20–30 dB to avoid overload from broadcasters.
 
+Bands in `bands.json` may overlap: **HF utility** covers 40 m, 20 m and the WWV slots. The
+radio stays in the band you picked for as long as the frequency is inside it; when you tune
+or key in a frequency outside it, the narrowest band that contains the new frequency is used.
+Band scan covers the band named in the top bar.
+
 ## 5c. HF conditions panel (solar / weather)
 
 Below 30 MHz a panel appears to the right of the spectrum with the numbers that decide
@@ -356,7 +367,7 @@ table (80–40 m … 12–10 m, day and night), a 24-hour **Kp** bar strip, and 
 amber with "offline" when the feeds can't be reached.
 
 The **☀ SFI 92 K3** chip in the top bar always shows the latest SFI and K. Tap it to hide
-the panel, or to pin it on while you're on VHF/UHF. Settings → SYSTEM → **HF conditions
+the panel, or to pin it on while you're on VHF/UHF. Settings → DISPLAY → **HF conditions
 panel** chooses `AUTO` (default: shown below 30 MHz), `ON` or `OFF`.
 
 Data comes from `hamqsl.com` (hourly), NOAA SWPC (every 10 min) and Open-Meteo (every
@@ -374,7 +385,10 @@ Weather location defaults to IP geolocation; to fix it, add to `settings.json`:
 
 **Record now** (Settings → AUDIO) writes a 48 kHz mono WAV to `~/Recordings/`, named
 `pisdr_YYYYmmdd_HHMMSS_<Hz>_<MODE>.wav`. Recordings are taken before the volume control,
-so turning the volume down doesn't make them quieter.
+so turning the volume down doesn't make them quieter. A recording uses about 5.8 MB per
+minute. PiSDR will not start one with less than 200 MB free on the card and stops a running
+one at 100 MB, with a message, so a forgotten recording cannot fill the card. The title of
+the Recordings page shows how much recording time is left.
 
 **Recordings ▸** lists them newest first. `PLAY` plays the selected file through the radio's
 audio output (the radio is muted meanwhile, `▶ PLAY` shows in the top bar), `STOP` ends it,
@@ -397,6 +411,81 @@ address to connect to (for example `192.168.1.137:1234`). PiSDR's own receiver, 
 recorder and decoders are paused meanwhile; **STOP** (or pushing the knob) shuts `rtl_tcp`
 down and gives the dongle back to PiSDR. The PPM correction and bias tee setting are passed
 to `rtl_tcp`. rtl_tcp has no password: only use it on a network you trust.
+
+## 5f. ADS-B aircraft map
+
+**BAND → ADS-B 1090** (or Settings → SYSTEM → **ADS-B aircraft map ▸**) opens a radar-style
+plot of the aircraft in range. An RTL-SDR cannot be a voice receiver and a 1090 MHz Mode S
+decoder at once, so the dongle is lent to `dump1090` while the map is open, the same way
+network mode lends it to `rtl_tcp`: PiSDR's receiver, scanner, recorder and decoders are
+paused, and **BACK** stops the decoder and brings the radio back (on 1090 MHz if you came
+from the band picker, where you were if you came from Settings).
+
+![ADS-B aircraft map](images/ui_adsb_map.png)
+
+- North is up and the receiver is the small circle in the middle. Rings are distances in
+  nautical miles; the range in the top-left corner is the one that reaches the top and
+  bottom edges.
+- Each arrow is an aircraft pointing the way it is flying, with its trail (about the last
+  three minutes). Beside it: the callsign (or the 6-digit ICAO address until the callsign
+  has been heard) and the altitude in hundreds of feet with `↑` / `↓` when climbing or
+  descending, so `350` is 35,000 ft and `024↑` is 2,400 ft and climbing. A grey square is
+  an aircraft on the ground; a grey arrow has not sent a position for 15 seconds. Aircraft
+  drop off the map after a minute of silence.
+- The panel on the right lists the aircraft nearest first; those heard but not yet located
+  are at the end. Selecting one shows altitude and climb rate, ground speed, track, distance
+  and bearing from you, squawk and signal level.
+
+| Control | Action |
+|---|---|
+| `ZOOM −` / `ZOOM +` | Range 10 / 25 / 50 / 100 / 150 / 250 nm |
+| `LABELS` | `FULL` callsign and altitude, `NAME` callsign only, `OFF` only the selected aircraft |
+| Knob | Select the next / previous aircraft by distance; push to clear the selection |
+| Tap | An aircraft or a list row selects it; empty sky clears the selection |
+| `BACK` | Stop the decoder and return to the radio |
+
+**Your location.** The map is centred on the same location as the weather: `"wx_lat"` and
+`"wx_lon"` in `~/.config/pisdr/settings.json` (section 5c). Set them for correct rings,
+distances and bearings. Without them the location guessed from your IP address is used and
+a note at the bottom of the map says so: that can be tens of kilometres out, which moves
+the centre marker and every distance by as much (the aircraft and the coastlines are still
+drawn in the right place relative to each other). With no location at all the map centres
+on the traffic and shows positions without distances.
+
+**The decoder.** `install.sh` builds FlightAware's `dump1090` from source (tag `v11.1`,
+a few minutes on a Pi 4) and installs the one program as `/usr/local/bin/dump1090-fa`.
+It does not install a service, a web server or anything that starts at boot, and PiSDR
+opens no network ports for it: the decoder writes its aircraft list to a file on the RAM
+disk (`$XDG_RUNTIME_DIR`), which PiSDR reads once a second. An existing
+`dump1090-mutability` or `readsb` is used instead if one is already installed. To build
+it by hand:
+
+```bash
+sudo apt install -y build-essential pkg-config libncurses-dev git
+pkg-config --exists librtlsdr || sudo apt install -y librtlsdr-dev   # already there after the section 2 rebuild
+git clone --depth 1 --branch v11.1 https://github.com/flightaware/dump1090.git
+make -C dump1090 RTLSDR=yes BLADERF=no HACKRF=no LIMESDR=no SOAPYSDR=no DUMP1090_VERSION=v11.1 dump1090
+sudo install -m 755 dump1090/dump1090 /usr/local/bin/dump1090-fa
+```
+
+**Reception.** 1090 MHz is line of sight: an antenna by a window or outdoors can hear
+aircraft 100 nm away or more, the same antenna in a basement hears almost nothing. The
+signal is vertically polarised and a quarter wave is about 6.9 cm, so a telescopic whip or
+dipole wants each element at roughly that length, stood upright. The decoder runs the
+tuner at maximum gain; PiSDR's gain and AGC settings do not apply to it, the **PPM
+correction** does. `dump1090` has no bias-tee switch, so if **Bias tee** is ON PiSDR runs
+`rtl_biast -b 1` before starting it (`rtl_biast` is normally part of the `rtl-sdr`
+package); if that tool is missing, an LNA powered through the coax stays off while the map
+is open.
+
+**The outlines** (coast, lakes, country borders, state / province lines) come from Natural
+Earth's public-domain 1:50m data in `software/config/outlines.npz`. That is drawn for
+country-sized views, so shorelines look angular at the 10 and 25 nm ranges, and rivers,
+roads and airports are not shown. `python3 tools/build_outlines.py --scale 10m` downloads
+the finer data set and rebuilds the file (2.5 MB instead of 0.4 MB).
+
+On a PC, `python -m pisdr --sim --windowed` flies a dozen made-up aircraft around the set
+location so the page can be tried without a radio.
 
 ## 6. Headless CLI tune test (no UI)
 
@@ -431,6 +520,14 @@ from a terminal on the desktop. If the app does not appear after a reboot, read
   `~/.config/labwc/autostart` (or the `pisdr =` line from `wayfire.ini`) and
   `rm ~/.config/autostart/pisdr.desktop`.
 - Logs: `~/.config/pisdr/pisdr.log` (rotating, 1 MB x 3) and `autostart.log`.
+- A bug in a button or page handler shows an **Internal error** message on screen and the
+  radio keeps running; the traceback is in `pisdr.log`.
+- Settings, memories, tags and the scan log are written to a temporary file and renamed
+  into place, so pulling the power mid-save leaves the previous file intact. A file that
+  cannot be read at startup is kept as `<name>.corrupt` (for example
+  `memories.json.corrupt`) and the radio starts with defaults for that file only.
+- `sudo systemctl poweroff`, `kill` and closing the window all go through the same
+  shutdown: settings are saved, a running recording is finalised and the dongle is released.
 
 ## 7a. "SIMULATOR" shown at startup
 
@@ -445,7 +542,8 @@ python3 -m pisdr --check
 This runs `rtl_test`, imports `gnuradio` and `osmosdr`, opens the dongle, builds the
 demodulators, opens the audio device and constructs the backend, printing a traceback for
 the first step that fails. A final "extras" step lists the optional pieces (gr-rds,
-multimon-ng, rtl_tcp, screen backlight access); these never fail the check. Typical results:
+multimon-ng, rtl_tcp, the dump1090 ADS-B decoder, screen backlight access); these never
+fail the check. Typical results:
 
 | First failed step | Fix |
 |---|---|
@@ -465,5 +563,12 @@ multimon-ng, rtl_tcp, screen backlight access); these never fail the check. Typi
 | App starts on the HDMI monitor instead of the DSI | Disconnect HDMI, or set `PISDR_SCREEN=DSI-1` in the `.desktop` `Exec` line |
 | "Undervoltage detected" in `dmesg` | Power supply or cable; see doc 01 section 5 |
 | Brightness row says "no access" | Re-run `install.sh` (udev rule + `video` group) and reboot |
-| "Radio did not reopen" after bias tee or network mode | Something else holds the dongle (`rtl_tcp`, another SDR program). Close it, then toggle bias tee or enter/leave network mode to retry |
+| "Radio did not reopen" after bias tee, network mode or the ADS-B map | Something else holds the dongle (`rtl_tcp`, another SDR program). Close it, then toggle bias tee or enter/leave network mode to retry |
+| "No ADS-B decoder (dump1090) found" when picking ADS-B 1090 | The decoder is not installed: re-run `install.sh` with the Pi online, or build it by hand (section 5f). The band is still tuned as an ordinary band |
+| "dump1090-fa stopped: ..." on, or instead of, the ADS-B map | The decoder could not open the dongle or lost it; the text after the colon is its own last message. Usually another program holds the dongle - in particular a `dump1090` / `readsb` / `piaware` **service** from an earlier install (`systemctl status dump1090-fa readsb`; `sudo systemctl disable --now <name>`). BACK returns to the radio |
+| ADS-B map stays on "Listening on 1090 MHz..." | No aircraft heard: check the antenna (section 5f), move it to a window, and remember that a quiet sky at night is normal away from airways |
+| ADS-B map lists aircraft that never appear on the plot | They have not sent a position the decoder could use yet (it normally needs two position messages), or they do not send one at all (older Mode S transponders) |
+| "Not enough free space to record" / "Recording stopped - storage is almost full" | Less than 200 MB (start) or 100 MB (running) free; delete recordings on the Recordings page |
+| "Internal error" message | A bug, not a hardware fault. The radio keeps running; send the traceback from `~/.config/pisdr/pisdr.log` |
+| Memories or settings back to defaults after a crash or power cut | The file was unreadable; the original is next to it as `*.corrupt` and can be repaired by hand |
 | Data decoder switches itself back to OFF | `multimon-ng` is missing (`sudo apt install multimon-ng`); the reason is shown as a status message |

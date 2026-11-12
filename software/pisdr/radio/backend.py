@@ -13,7 +13,7 @@ import wave
 import numpy as np
 
 from .. import config
-from ..qt import QObject, Signal
+from ..qt import QObject, QTimer, Signal
 from ..state import RadioState
 from .decoders import Multimon
 
@@ -49,6 +49,9 @@ class Backend(QObject):
         self._spectrum_on = True
         self.multimon = Multimon(self)
         self.multimon.line.connect(state.append_decoder_line)
+        self._adsb_timer = QTimer(self)
+        self._adsb_timer.setInterval(config.ADSB_POLL_MS)
+        self._adsb_timer.timeout.connect(self.poll_adsb)
         self.rds_data.connect(state.set_rds)
         self.playback_finished.connect(self.stop_playback)
         state.changed.connect(self._on_state_changed)
@@ -61,6 +64,7 @@ class Backend(QObject):
 
     def stop(self) -> None:
         self.running = False
+        self._adsb_timer.stop()
         if self.state.recording:
             self._hw_set_recording(False)
         self.multimon.stop()
@@ -195,8 +199,8 @@ class Backend(QObject):
     # ------------------------------------------------------------------ playback
     def play_file(self, path: str) -> str | None:
         """Play a recording through the audio chain. Returns an error text or None."""
-        if self.state.network_mode:
-            return "Leave network mode first"
+        if self.state.dongle_lent:
+            return "Leave network mode / the ADS-B map first"
         try:
             with wave.open(str(path), "rb") as wav:
                 if wav.getsampwidth() != 2 or wav.getframerate() != config.AUDIO_RATE:
@@ -217,20 +221,36 @@ class Backend(QObject):
         self._hw_play(None)
         self.state.set_playing("")
 
-    # ------------------------------------------------------------------ network mode
-    def start_network_mode(self) -> str | None:
-        """Release the dongle to rtl_tcp. Returns an error text or None."""
-        if self.state.network_mode:
-            return None
+    # ------------------------------------------------------------------ lending the dongle out
+    def _pause_receiver(self) -> None:
+        """Stop everything that uses the receiver before the dongle goes to another program."""
         self.stop_playback()
         if self.state.recording:
             self.state.set_recording(False)
         self.multimon.stop()
         self.running = False
+
+    def _resume_receiver(self) -> None:
+        self.running = True
+        self._apply_all()
+
+    def _took_back(self, error: str | None) -> str | None:
+        self._resume_receiver()
+        if self.radio_down:
+            return (error or "Radio did not reopen") + " - restart PiSDR"
+        return error
+
+    # ------------------------------------------------------------------ network mode
+    def start_network_mode(self) -> str | None:
+        """Release the dongle to rtl_tcp. Returns an error text or None."""
+        if self.state.network_mode:
+            return None
+        if self.state.adsb_mode:
+            return "Leave the ADS-B map first"
+        self._pause_receiver()
         error = self._hw_network(True)
         if error:
-            self.running = True
-            self._apply_all()
+            self._resume_receiver()
             return error
         self.state.set_network_mode(True)
         return None
@@ -240,11 +260,38 @@ class Backend(QObject):
             return None
         error = self._hw_network(False)
         self.state.set_network_mode(False)
-        self.running = True
-        self._apply_all()
-        if self.radio_down:
-            return (error or "Radio did not reopen") + " - restart PiSDR"
-        return error
+        return self._took_back(error)
+
+    # ------------------------------------------------------------------ ADS-B mode
+    def start_adsb_mode(self) -> str | None:
+        """Release the dongle to the ADS-B decoder. Returns an error text or None."""
+        if self.state.adsb_mode:
+            return None
+        if self.state.network_mode:
+            return "Leave network mode first"
+        self._pause_receiver()
+        error = self._hw_adsb(True)
+        if error:
+            self._resume_receiver()
+            return error
+        self.state.set_aircraft([])
+        self.state.set_adsb_mode(True)
+        self._adsb_timer.start()
+        return None
+
+    def stop_adsb_mode(self) -> str | None:
+        if not self.state.adsb_mode:
+            return None
+        self._adsb_timer.stop()
+        error = self._hw_adsb(False)
+        self.state.set_adsb_mode(False)
+        self.state.set_aircraft([])
+        return self._took_back(error)
+
+    def poll_adsb(self) -> None:
+        """Once a second in ADS-B mode: copy the decoder's aircraft list into the state."""
+        if self.state.adsb_mode:
+            self.state.set_aircraft(*self._hw_adsb_poll())
 
     # ------------------------------------------------------------------ hooks
     def _hw_start(self) -> None: ...
@@ -268,6 +315,11 @@ class Backend(QObject):
     def _hw_set_decoder_feed(self, on: bool) -> None: ...
     def _hw_play(self, path: str | None) -> str | None: ...
     def _hw_network(self, on: bool) -> str | None: ...
+    def _hw_adsb(self, on: bool) -> str | None: ...
+
+    def _hw_adsb_poll(self) -> tuple[list, int, str]:
+        """(aircraft, messages decoded so far, error text if the decoder has stopped)."""
+        return [], 0, ""
 
     def set_spectrum_enabled(self, on: bool) -> None:
         """Pause FFT→UI work while the waterfall is not visible (saves audio CPU)."""

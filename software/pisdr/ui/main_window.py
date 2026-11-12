@@ -13,6 +13,7 @@ from ..scan import Scanner
 from ..spacewx import SpaceWxFetcher
 from ..state import RadioState, format_step
 from . import style
+from .adsb_page import AdsbPage
 from .cw_panel import CwPanel
 from .freq_display import FreqDisplay, SMeter
 from .hf_panel import HfPanel
@@ -121,7 +122,7 @@ class MainPage(Page):
 
 class MainWindow(QtWidgets.QMainWindow):
     (PAGE_MAIN, PAGE_BAND, PAGE_MODE, PAGE_KEYPAD, PAGE_SETTINGS, PAGE_MEMORIES,
-     PAGE_RECORDINGS, PAGE_SCAN_LOG, PAGE_NETWORK) = range(9)
+     PAGE_RECORDINGS, PAGE_SCAN_LOG, PAGE_NETWORK, PAGE_ADSB) = range(10)
 
     _ACTIVITY_EVENTS = (QtCore.QEvent.Type.MouseButtonPress, QtCore.QEvent.Type.TouchBegin,
                         QtCore.QEvent.Type.KeyPress, QtCore.QEvent.Type.Wheel)
@@ -133,6 +134,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.scanner = Scanner(state, self)
         self.rec_timer = RecTimer(state, self)
         self.backlight = Backlight()
+        self._closed = False
         self.setWindowTitle("PiSDR")
         style.apply_theme(state.theme)
         self.setStyleSheet(style.STYLESHEET)
@@ -180,8 +182,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.recordings_page = RecordingsPage(state, backend)
         self.scan_log_page = ScanLogPage(state)
         self.network_page = NetworkPage(state, backend)
+        self.adsb_page = AdsbPage(state, backend)
         pages = (self.main_page, self.band_page, self.mode_page, self.keypad_page, self.settings_page,
-                 self.memories_page, self.recordings_page, self.scan_log_page, self.network_page)
+                 self.memories_page, self.recordings_page, self.scan_log_page, self.network_page,
+                 self.adsb_page)
         for page in pages:
             self.stack.addWidget(page)
             page.done.connect(lambda p=page: self._page_done(p))
@@ -190,6 +194,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings_page.quit_requested.connect(self.close)
         self.settings_page.open_page.connect(self._open_named)
         self.network_page.stop_requested.connect(self._leave_network)
+        self.band_page.adsb_picked.connect(self._enter_adsb)
+        self.adsb_page.stop_requested.connect(self._leave_adsb)
 
         self.softkeys = SoftKeyBar()
         layout.addWidget(self.softkeys)
@@ -262,6 +268,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def show_page(self, index: int) -> None:
         if self.state.network_mode and index != self.PAGE_NETWORK:
             return   # the dongle belongs to rtl_tcp; only the network page's STOP gets out
+        if self.state.adsb_mode and index != self.PAGE_ADSB:
+            return   # ... or to the ADS-B decoder; only the map's BACK gets out
         if index != self.PAGE_MAIN and self.state.scanning:
             self.scanner.stop()
         self.stack.setCurrentIndex(index)
@@ -290,6 +298,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _open_named(self, name: str) -> None:
         if name == "network":
             self._enter_network()
+        elif name == "adsb":
+            self._enter_adsb()
         elif name == "recordings":
             self.show_page(self.PAGE_RECORDINGS)
         elif name == "scan_log":
@@ -309,6 +319,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.show_message("Taking the dongle back...")
         QtWidgets.QApplication.processEvents()
         error = self.backend.stop_network_mode()
+        self.show_main()
+        self.show_message(error or "Radio back on the dongle")
+
+    def _enter_adsb(self) -> None:
+        """Lend the dongle to the ADS-B decoder and show its map (from the band picker or Settings)."""
+        if self.state.adsb_mode:
+            return
+        self.scanner.stop()
+        self.show_message("Handing the dongle to the ADS-B decoder...")
+        QtWidgets.QApplication.processEvents()
+        error = self.backend.start_adsb_mode()
+        if error:
+            self.show_message(error)
+            return
+        self.toast.hide()
+        self.show_page(self.PAGE_ADSB)
+
+    def _leave_adsb(self) -> None:
+        self.show_message("Taking the dongle back...")
+        QtWidgets.QApplication.processEvents()
+        error = self.backend.stop_adsb_mode()
         self.show_main()
         self.show_message(error or "Radio back on the dongle")
 
@@ -431,7 +462,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.backlight.set_percent(self.state.brightness)
         elif field == "dim_after_s":
             self._activity()
-        if field not in ("signal_db", "cw_text", "decoder_lines", "rds"):
+        if field not in ("signal_db", "cw_text", "decoder_lines", "rds", "aircraft"):
             self._update_topbar()
 
     def _apply_theme(self, name: str) -> None:
@@ -458,6 +489,10 @@ class MainWindow(QtWidgets.QMainWindow):
             f"<span style='color:{dim}'>SQL</span> {'open' if s.squelch_db <= config.SQUELCH_MIN_DB else f'{s.squelch_db:.0f}'}",
             f"<span style='color:{dim}'>GAIN</span> {'AGC' if s.agc else f'{s.gain_db:.0f} dB'}",
         ]
+        if s.adsb_mode:      # the receiver is paused: its mode, step and squelch mean nothing here
+            parts = [f"<span style='color:{acc}'><b>ADS-B MAP</b></span>",
+                     f"{config.ADSB_FREQ_HZ / 1e6:.0f} MHz",
+                     f"<span style='color:{dim}'>receiver paused</span>"]
         if s.network_mode:
             parts.append(f"<span style='color:{acc}'><b>NET</b></span>")
         if s.bias_tee:
@@ -482,7 +517,7 @@ class MainWindow(QtWidgets.QMainWindow):
             src = "MEM" if s.scan_source == "memory" else "BAND"
             prio = "+P" if s.priority else ""
             parts.append(f"<span style='color:{acc}'><b>{held}:{src}{prio}</b></span>")
-        knob = f"<span style='color:{acc}'><b>KNOB {s.knob_function}</b></span>"
+        knob = f"<span style='color:{acc}'><b>KNOB {'SELECT' if s.adsb_mode else s.knob_function}</b></span>"
         clock = time.strftime("%H:%MZ", time.gmtime()) if s.clock_utc else time.strftime("%H:%M")
         self.topbar_left.setText(" &nbsp;&nbsp; ".join(parts))
         self.topbar_right.setText(f"{knob} &nbsp;&nbsp; {clock}")
@@ -515,7 +550,7 @@ class MainWindow(QtWidgets.QMainWindow):
         mods = event.modifiers()
         shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
         ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
-        if key == _kv(Qt.Key.Key_Q) and ctrl or key == _kv(Qt.Key.Key_Escape):
+        if key == _kv(Qt.Key.Key_Q) and ctrl:
             self.close()
         elif key in (_kv(Qt.Key.Key_Up), _kv(Qt.Key.Key_Right)):
             self.knob_turned(10 if shift else 1)
@@ -540,10 +575,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.knob_turned(1 if event.angleDelta().y() > 0 else -1)
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        QtWidgets.QApplication.instance().removeEventFilter(self)
-        self.scanner.stop()
-        self.spacewx.stop()
-        self.backend.stop_playback()
-        self.state.save()
-        self.backend.stop()
+        if not self._closed:      # a signal and the user can both ask; shut down once
+            self._closed = True
+            QtWidgets.QApplication.instance().removeEventFilter(self)
+            self.scanner.stop()
+            self.spacewx.stop()
+            self.backend.stop_playback()
+            self.state.save()
+            self.backend.stop()   # also finalises a recording in progress
         super().closeEvent(event)

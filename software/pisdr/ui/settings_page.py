@@ -76,10 +76,10 @@ def _short(text: str, n: int = 16) -> str:
 
 class SettingsPage(Page):
     quit_requested = Signal()
-    open_page = Signal(str)       # "recordings", "scan_log", "network"
+    open_page = Signal(str)       # "recordings", "scan_log", "network", "adsb"
 
     TABS = ("RADIO", "AUDIO", "DISPLAY", "SCAN", "SYSTEM")
-    IGNORED_FIELDS = {"signal_db", "cw_text", "cw_wpm", "decoder_lines", "rds", "space_wx"}
+    IGNORED_FIELDS = {"signal_db", "cw_text", "cw_wpm", "decoder_lines", "rds", "space_wx", "aircraft"}
 
     def __init__(self, state: RadioState, backend=None, backlight=None, parent=None) -> None:
         super().__init__(parent)
@@ -243,6 +243,8 @@ class SettingsPage(Page):
             _Row("Load HF presets", lambda: "", lambda d: s.import_preset_memories() if d == 0 else None, action=True),
             _Row("Network mode (rtl_tcp)", lambda: "\u25b8",
                  lambda d: self.open_page.emit("network") if d == 0 else None, action=True),
+            _Row("ADS-B aircraft map", lambda: "\u25b8",
+                 lambda d: self.open_page.emit("adsb") if d == 0 else None, action=True),
             _Row("Exit PiSDR", lambda: "", lambda d: self.quit_requested.emit() if d == 0 else None, action=True),
             _Row("Shut down Pi", lambda: "",
                  lambda d: self._confirmed("shutdown", self._shutdown) if d == 0 else None, action=True),
@@ -354,6 +356,8 @@ class SettingsPage(Page):
             self.state.message.emit("Press again to confirm")
 
     def _shutdown(self) -> None:
+        if self.state.recording:
+            self.state.set_recording(False)     # close the WAV before the power goes
         self.state.save()
         self.state.message.emit("Shutting down...")
         if sys.platform.startswith("linux"):

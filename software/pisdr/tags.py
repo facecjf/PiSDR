@@ -16,7 +16,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import config
+from . import config, storage
 from .qt import QObject, QTimer, Signal
 from .state import RadioState
 
@@ -46,7 +46,7 @@ def load_tag_file(path: Path, source: str) -> list[Tag]:
             label = str(entry["label"]).strip()[:20]
             if label:
                 tags.append(Tag(int(entry["hz"]), label, str(entry.get("src", source))))
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError, AttributeError):
             continue
     return tags
 
@@ -113,10 +113,8 @@ class TagStore(QObject):
 
     def _save(self) -> None:
         try:
-            config.USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
             data = {"tags": [{"hz": t.hz, "label": t.label, "src": t.source}
                              for t in sorted(self.user, key=lambda t: t.hz)]}
-            with open(config.USER_TAGS_FILE, "w", encoding="utf-8") as fh:
-                json.dump(data, fh, indent=1)
+            storage.write_json_atomic(config.USER_TAGS_FILE, data, indent=1)
         except OSError as exc:
             log.warning("Could not save tags: %s", exc)

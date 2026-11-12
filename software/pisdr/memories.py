@@ -11,7 +11,7 @@ import logging
 import time
 from dataclasses import asdict, dataclass
 
-from . import config
+from . import config, storage
 
 log = logging.getLogger(__name__)
 
@@ -78,7 +78,9 @@ def in_window(window: tuple[int, int], days: set[int], tm: time.struct_time) -> 
     start, end = window
     now_min = tm.tm_hour * 60 + tm.tm_min
     today = tm.tm_wday
-    if start <= end:
+    if start == end:          # "00:00-24:00": the whole day
+        return today in days
+    if start < end:
         return today in days and start <= now_min < end
     # Crosses midnight: before midnight it belongs to today, after midnight to yesterday.
     if now_min >= start:
@@ -99,37 +101,72 @@ def default_name(vfo_hz: int, mode: str) -> str:
     return f"{_fmt_mhz(vfo_hz)} {mode}"
 
 
+def memory_from_json(item) -> Memory | None:
+    """One entry of memories.json as a :class:`Memory`, or None if it can't be used."""
+    try:
+        vfo_hz = int(float(item["vfo_hz"]))
+        if not config.FREQ_MIN <= vfo_hz <= config.FREQ_MAX:
+            return None
+        mode = item.get("mode", "NFM")
+        if mode not in config.MODES:
+            mode = "NFM"
+        try:
+            step_hz = int(item.get("step_hz", 1000))
+        except (TypeError, ValueError):
+            step_hz = 1000
+        utc = str(item.get("utc") or "")
+        return Memory(
+            name=str(item.get("name") or default_name(vfo_hz, mode)),
+            vfo_hz=vfo_hz,
+            mode=mode,
+            step_hz=step_hz if step_hz > 0 else 1000,
+            group=str(item.get("group") or "").strip().upper()[:12],
+            utc=utc if parse_window(utc) else "",
+            days=str(item.get("days") or ""),
+        )
+    except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+
 def load_memories(path=None) -> list[Memory]:
+    """Read memories (or a preset list from *path*). Entries that can't be used are skipped.
+
+    Nothing the user typed is ever thrown away: if their own file is unreadable it is renamed
+    to ``memories.json.corrupt``, and if only some entries are bad a copy is kept under that
+    name before the next save drops them.
+    """
+    own_file = path is None
     path = path or config.MEMORIES_FILE
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-        memories = []
-        for item in data.get("memories", []):
-            mode = item.get("mode", "NFM")
-            if mode not in config.MODES:
-                mode = "NFM"
-            memories.append(Memory(
-                name=str(item.get("name") or default_name(int(item["vfo_hz"]), mode)),
-                vfo_hz=int(item["vfo_hz"]),
-                mode=mode,
-                step_hz=int(item.get("step_hz", 1000)),
-                group=str(item.get("group") or "").strip().upper()[:12],
-                utc=str(item.get("utc") or "") if parse_window(str(item.get("utc") or "")) else "",
-                days=str(item.get("days") or ""),
-            ))
-        return memories[: config.MAX_MEMORIES]
-    except (OSError, ValueError, TypeError, KeyError) as exc:
-        log.debug("No memories loaded: %s", exc)
+    except FileNotFoundError:
         return []
+    except OSError as exc:
+        log.warning("Could not read %s: %s", path, exc)
+        return []
+    except ValueError as exc:
+        log.warning("%s is not valid JSON: %s", path, exc)
+        if own_file:
+            storage.set_aside(path)
+        return []
+    items = data.get("memories", []) if isinstance(data, dict) else data
+    if not isinstance(items, list):
+        items = []
+    memories = [m for m in map(memory_from_json, items) if m is not None]
+    skipped = len(items) - len(memories)
+    if skipped:
+        log.warning("%s: skipped %d entr%s that could not be read", path, skipped,
+                    "y" if skipped == 1 else "ies")
+        if own_file:
+            storage.keep_copy(path)
+    return memories[: config.MAX_MEMORIES]
 
 
 def save_memories(memories: list[Memory], path=None) -> None:
     path = path or config.MEMORIES_FILE
     try:
-        config.USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         payload = {"memories": [m.to_json() for m in memories[: config.MAX_MEMORIES]]}
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2)
+        storage.write_json_atomic(path, payload)
     except OSError as exc:
         log.warning("Could not save memories: %s", exc)

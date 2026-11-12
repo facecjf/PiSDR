@@ -10,6 +10,23 @@ HOME_DIR="$(getent passwd "$USER_NAME" | cut -d: -f6)"
 
 echo "== PiSDR install from $HERE for user $USER_NAME"
 
+# dump1090 decodes the aircraft for the ADS-B map. It is built from source because Trixie has
+# no package for it and the Bookworm package installs a service that takes the dongle at boot.
+# Here it is only a program in /usr/local/bin that PiSDR starts while the map is open.
+ADSB_TAG="v11.1"
+build_adsb_decoder() {
+  local src status=0
+  src="$(mktemp -d)"
+  sudo apt-get install -y build-essential pkg-config libncurses-dev git &&
+    { pkg-config --exists librtlsdr || sudo apt-get install -y librtlsdr-dev; } &&
+    git clone --quiet --depth 1 --branch "$ADSB_TAG" https://github.com/flightaware/dump1090.git "$src/dump1090" &&
+    make -C "$src/dump1090" -j"$(nproc)" RTLSDR=yes BLADERF=no HACKRF=no LIMESDR=no SOAPYSDR=no \
+      DUMP1090_VERSION="$ADSB_TAG" dump1090 &&
+    sudo install -m 755 "$src/dump1090/dump1090" /usr/local/bin/dump1090-fa || status=$?
+  rm -rf "$src"
+  return "$status"
+}
+
 if [[ "${1:-}" != "--no-apt" ]]; then
   echo "== apt packages"
   sudo apt-get update
@@ -23,6 +40,14 @@ if [[ "${1:-}" != "--no-apt" ]]; then
   sudo apt-get install -y qt6-wayland 2>/dev/null || true
   # Optional: RDS station name / radio text on FM broadcast. PiSDR runs without it.
   sudo apt-get install -y gr-rds 2>/dev/null || echo "   gr-rds not available - RDS stays off"
+  # Optional: ADS-B decoder for the aircraft map. PiSDR runs without it.
+  if command -v dump1090-fa >/dev/null || command -v dump1090-mutability >/dev/null \
+      || command -v readsb >/dev/null || command -v dump1090 >/dev/null; then
+    echo "== ADS-B decoder already installed"
+  else
+    echo "== building the ADS-B decoder (dump1090 $ADSB_TAG, takes a few minutes)"
+    build_adsb_decoder || echo "   dump1090 did not build - the ADS-B map stays unavailable"
+  fi
 fi
 
 echo "== blacklisting the DVB kernel driver (needs reboot to take effect)"

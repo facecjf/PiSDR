@@ -22,6 +22,12 @@ class SoftKeyBar(QtWidgets.QWidget):
         self.buttons: list[QtWidgets.QPushButton] = []
         self._hold_timers: list[QtCore.QTimer] = []
         self._held = [False] * 4
+        self._flashed: set[int] = set()
+        # Owned by the bar, so a flash still pending when the window closes is dropped.
+        self._flash_timer = QtCore.QTimer(self)
+        self._flash_timer.setSingleShot(True)
+        self._flash_timer.setInterval(120)
+        self._flash_timer.timeout.connect(self._unflash)
         for i in range(4):
             btn = QtWidgets.QPushButton("")
             btn.setObjectName("softkey")
@@ -46,9 +52,14 @@ class SoftKeyBar(QtWidgets.QWidget):
     def flash(self, index: int) -> None:
         """Visual feedback when a physical key is pressed."""
         if 0 <= index < 4:
-            btn = self.buttons[index]
-            btn.setDown(True)
-            QtCore.QTimer.singleShot(120, lambda: btn.setDown(False))
+            self.buttons[index].setDown(True)
+            self._flashed.add(index)
+            self._flash_timer.start()
+
+    def _unflash(self) -> None:
+        for index in self._flashed:
+            self.buttons[index].setDown(False)
+        self._flashed.clear()
 
     # Touch handling mirrors the physical keys: short tap -> pressed, hold -> long_pressed.
     def _on_pressed(self, i: int) -> None:

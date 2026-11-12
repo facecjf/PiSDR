@@ -55,7 +55,9 @@ SQUELCH_STEP_DB = 1.0
 VOLUME_STEP = 2              # percent per encoder detent
 FFT_SIZE = 1024
 FFT_FPS = 20
+FFT_FPS_MIN, FFT_FPS_MAX = 5, 40
 WATERFALL_ROWS = 170
+WATERFALL_SPEED_MAX = 4      # rows added per frame
 SPECTRUM_UI_MS = 50          # coalesce GUI redraws (~20 fps max), drop intermediate frames
 FUNC_RETURN_S = 4.0          # knob returns to TUNE after this many idle seconds
 RTL_DEVICE_ARGS = "rtl=0"    # append ",bias=1" for the bias tee (handled in the backend)
@@ -82,6 +84,13 @@ PRIORITY_LOOK_MS = 350       # how long the scanner listens on the priority chan
 PRIORITY_SETTLE_MS = 120     # ignore the S-meter this long after jumping (stale level)
 MAX_MEMORIES = 100
 MEMORY_GROUP_ALL = "ALL"
+
+# Recording: 16-bit mono at AUDIO_RATE is about 5.8 MB a minute. The recorder keeps clear
+# of a full card, which on a Pi means a system that no longer boots cleanly.
+REC_BYTES_PER_S = AUDIO_RATE * 2
+REC_MIN_FREE_MB = 200        # refuse to start a recording with less free space than this
+REC_STOP_FREE_MB = 100       # stop a running recording when free space falls to this
+REC_SPACE_CHECK_MS = 10_000
 
 # Record timer (UTC, because the schedules it is for are published in UTC).
 REC_TIMER_LENGTH_CHOICES_MIN = (5, 10, 15, 20, 30, 45, 60, 90, 120, 180)
@@ -135,6 +144,22 @@ DECODER_TEXT_MAX = 40        # decoded lines kept for the strip on the main page
 
 # Network mode: hand the dongle to rtl_tcp so SDR++ / SDR# / GQRX can use it over Wi-Fi.
 RTL_TCP_PORT = 1234
+
+# ADS-B map: the dongle is lent to a dump1090-family decoder, which writes the aircraft it
+# is tracking to aircraft.json once a second. First program found on PATH is used.
+ADSB_FREQ_HZ = 1_090_000_000
+ADSB_PROGRAMS = ("dump1090-fa", "dump1090-mutability", "readsb", "dump1090")
+ADSB_POLL_MS = 1000
+ADSB_MAX_AGE_S = 60            # an aircraft not heard for this long leaves the list
+ADSB_POSITION_MAX_AGE_S = 60   # ... and a position this old leaves the map
+ADSB_STALE_S = 15              # drawn dimmed once its position is older than this
+ADSB_RANGES_NM = ((10, 5), (25, 5), (50, 10), (100, 25), (150, 50), (250, 50))   # (range, ring spacing)
+ADSB_DEFAULT_RANGE_NM = 100
+ADSB_LABELS = ("FULL", "NAME", "OFF")   # callsign + flight level / callsign / selected aircraft only
+ADSB_TRAIL_POINTS = 180        # positions remembered per aircraft for its trail (about 3 minutes)
+ADSB_PANEL_W = 268             # aircraft list beside the map
+ADSB_SIM_HOME = (43.04, -87.91)   # where the simulator's traffic flies if no location is set
+OUTLINES_FILE = SOFTWARE_DIR / "config" / "outlines.npz"   # coastlines and borders for the map
 
 # Post-demod audio DSP. HPF/LPF/notch are IIR biquads (C++); NR/NB are Python blocks that
 # are only spliced into the audio path while their level is > 0.

@@ -15,7 +15,8 @@ log = logging.getLogger(__name__)
 
 
 class Backlight:
-    def __init__(self, base: Path = config.BACKLIGHT_DIR) -> None:
+    def __init__(self, base: Path | None = None) -> None:
+        base = base or config.BACKLIGHT_DIR
         self.path: Path | None = None
         self.max_raw = 0
         self.writable = False

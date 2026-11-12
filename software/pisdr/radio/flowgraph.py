@@ -22,8 +22,9 @@ Flowgraph::
 [NB]/[NR] are Python blocks and are only wired in while their level is > 0, so the default
 audio path never waits on the Python GIL (which the waterfall painter holds a lot).
 
-Changing the bias tee or entering network mode tears the whole flowgraph down (which is
-the only reliable way to make gr-osmosdr close the dongle) and builds a fresh one.
+Changing the bias tee, entering network mode or opening the ADS-B map tears the whole
+flowgraph down (which is the only reliable way to make gr-osmosdr close the dongle) and
+builds a fresh one afterwards.
 
 Run ``python3 -m pisdr.radio.flowgraph --freq 162.4e6 --mode NFM`` for a headless test.
 """
@@ -46,8 +47,11 @@ from gnuradio.filter import firdes
 import osmosdr
 
 from .. import config
+from ..adsb import receiver_position
 from ..qt import QTimer
 from ..sysinfo import lan_address
+from . import adsb_decoder
+from .adsb_decoder import AdsbDecoder
 from .audio_dsp import AudioFilters, NoiseReducer, PeakBlanker
 from .backend import Backend
 from .cw_decoder import CwEnvelopeSink
@@ -75,6 +79,7 @@ class GnuRadioBackend(Backend):
         self._mode_index = {m: i for i, m in enumerate(config.MODES)}
         self._record_path: Path | None = None
         self._rtl_tcp: subprocess.Popen | None = None
+        self.adsb = AdsbDecoder()
         self.tb = gr.top_block("pisdr")
         self._build()
         self._poll = QTimer(self)
@@ -187,6 +192,9 @@ class GnuRadioBackend(Backend):
         if self.tb is not None:
             self.tb.stop()
             self.tb.wait()
+        if self.player is not None:      # a recording was playing: it ends with the old graph
+            self.player.close()
+        self.state.set_playing("")
         self._drop_graph()
 
     def _rebuild(self) -> str | None:
@@ -237,6 +245,7 @@ class GnuRadioBackend(Backend):
     def _hw_stop(self) -> None:
         self._poll.stop()
         self._stop_rtl_tcp()
+        self.adsb.stop()
         if self.tb is not None:
             self.tb.stop()
             self.tb.wait()
@@ -294,10 +303,18 @@ class GnuRadioBackend(Backend):
 
     def _hw_set_recording(self, on: bool) -> None:
         if on:
-            config.RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
             stamp = time.strftime("%Y%m%d_%H%M%S")
             path = config.RECORDINGS_DIR / f"pisdr_{stamp}_{self.state.vfo_hz}_{self.state.mode}.wav"
-            self.wav.open(str(path))
+            try:
+                config.RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+                opened, reason = self.wav.open(str(path)), f"could not create {path.name}"
+            except (OSError, RuntimeError) as exc:
+                opened, reason = False, str(exc)
+            if opened is False:      # folder missing / read-only / card full
+                log.warning("recording failed: %s", reason)
+                self.status.emit(f"Cannot record: {reason}")
+                self.state.set_recording(False)
+                return
             self.rec_gate.set_enabled(True)
             self._record_path = path
             self.status.emit(f"Recording {path.name}")
@@ -432,7 +449,10 @@ class GnuRadioBackend(Backend):
             proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         except OSError as exc:
             return f"rtl_tcp failed: {exc}" + _suffix(self._rebuild())
-        time.sleep(0.8)
+        try:
+            proc.wait(timeout=0.8)     # it exits straight away if it cannot claim the dongle
+        except subprocess.TimeoutExpired:
+            pass                       # still running: it is serving
         if proc.poll() is not None:
             err = (proc.stderr.read() or b"").decode("utf-8", "replace").strip().splitlines()
             reason = err[-1] if err else f"code {proc.returncode}"
@@ -457,6 +477,26 @@ class GnuRadioBackend(Backend):
     @property
     def rtl_tcp_alive(self) -> bool:
         return self._rtl_tcp is not None and self._rtl_tcp.poll() is None
+
+    # ------------------------------------------------------------------ ADS-B mode (dump1090)
+    def _hw_adsb(self, on: bool) -> str | None:
+        if not on:
+            self.adsb.stop()
+            return self._rebuild()
+        problem = adsb_decoder.problem_with(adsb_decoder.find_program())
+        if problem:
+            return problem                         # nothing to hand the dongle to: leave the radio alone
+        self._teardown()
+        where = receiver_position(self.state)
+        # An IP-derived location can be tens of km out; only a location the user set is passed on.
+        position = where[:2] if where and where[2] == "settings" else None
+        error = self.adsb.start(ppm=self.state.ppm, bias_tee=self.state.bias_tee, position=position)
+        if error:
+            return error + _suffix(self._rebuild())
+        return None
+
+    def _hw_adsb_poll(self) -> tuple[list, int, str]:
+        return self.adsb.read()
 
     # ------------------------------------------------------------------ S-meter
     def _poll_level(self) -> None:

@@ -68,6 +68,9 @@ class MorseDecoder:
         self._dit_s = 1.2 / 20.0            # initial guess: 20 WPM
         self._mark_hist: list[float] = []
         self._word_flushed = True
+        self._chars_in_word = 0
+        self._held: str | None = None       # lone dit / dah waiting to see if a word follows
+        self._undo: tuple[float, list[float]] | None = None
         self.chars_decoded = 0
 
     # ------------------------------------------------------------------ public
@@ -89,6 +92,9 @@ class MorseDecoder:
         self._run = 0
         self._key_down = False
         self._word_flushed = True
+        self._chars_in_word = 0
+        self._held = None
+        self._undo = None
         self._init = False
 
     def process(self, env: np.ndarray) -> None:
@@ -144,6 +150,10 @@ class MorseDecoder:
     def _on_mark(self, dur: float) -> None:
         if dur < self._dit_s * 0.3:
             return  # glitch
+        if not self._symbols and self._chars_in_word == 0:
+            # First element of a new word. If it turns out to be a noise blip, the speed
+            # estimate is put back, so static cannot drag the decoder off the sender's speed.
+            self._undo = (self._dit_s, list(self._mark_hist))
         if self.wpm_lock is None:
             self._update_speed(dur)
         self._symbols += "." if dur < self._dit_s * 2.0 else "-"
@@ -160,11 +170,28 @@ class MorseDecoder:
             self._emit_symbols()
         if not self._word_flushed and gap > self._dit_s * 6.0:
             self._word_flushed = True
+            self._chars_in_word = 0
+            if self._held is not None:
+                # A single dit or dah with silence on both sides: that is what a burst of
+                # static looks like, and it is what used to print as a stream of "E E E".
+                self._held = None
+                if self._undo is not None and self.wpm_lock is None:
+                    self._dit_s, self._mark_hist = self._undo
+                return
             self.on_text(" ")
 
     def _emit_symbols(self) -> None:
-        text = MORSE_TABLE.get(self._symbols, "*")
-        self._symbols = ""
+        symbols, self._symbols = self._symbols, ""
+        text = MORSE_TABLE.get(symbols, "*")
+        first = self._chars_in_word == 0
+        self._chars_in_word += 1
+        if first and len(symbols) == 1:
+            self._held = text           # printed as soon as a second character follows
+            return
+        if self._held is not None:
+            held, self._held = self._held, None
+            self.chars_decoded += 1
+            self.on_text(held)
         self.chars_decoded += 1
         self.on_text(text)
 

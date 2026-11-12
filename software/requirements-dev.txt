@@ -1,0 +1,6 @@
+# Everything needed to run the simulator and the tests on a PC (no radio, no GNU Radio).
+# On the Pi the app itself uses the apt packages installed by install.sh.
+numpy
+pyqtgraph>=0.13
+PyQt5
+pytest

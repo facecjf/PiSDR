@@ -4,7 +4,7 @@ The receiver today is one RTL-SDR Blog V4, one `osmosdr.source` at 1.92 MS/s, an
 
 ## Done
 
-Everything here runs on the single V4; user-facing details are in `docs/02_software_setup.md` sections 5–5e.
+Everything here runs on the single V4; user-facing details are in `docs/02_software_setup.md` sections 5–5f.
 
 - **Band scan** (and memory scan): steps the current band, holds above a trigger level, resumes after it goes quiet. Dwell, resume (or stay) and trigger level are settings.
 - **Scan lockouts** (long-press SKIP, or from the memories page), a **priority channel** checked every 2–10 s while scanning, and a **scan log** of every hold with a page to re-tune or lock out hits.
@@ -15,6 +15,10 @@ Everything here runs on the single V4; user-facing details are in `docs/02_softw
 - **Recording**: recordings browser with playback through the radio's audio, and a UTC record timer (once or daily) that tunes, records and tunes back. Recordings are taken before the volume control.
 - **Decoders**: RDS (PS / PTY / RT) on FM broadcast via optional `gr-rds`; APRS, POCSAG, FLEX, EAS and DTMF via `multimon-ng`.
 - **Network mode**: hands the dongle to `rtl_tcp` on port 1234 and takes it back.
+- **ADS-B aircraft map**: picking the ADS-B 1090 band lends the dongle to `dump1090` and shows a radar-style plot (range rings, coastlines and borders, callsigns, altitudes, trails) with a list of the nearest aircraft. `install.sh` builds the decoder; no service, no network ports.
+- **Robustness**: settings, memories, tags and the scan log are saved atomically and damaged files are set aside as `*.corrupt` instead of being overwritten; each bad setting falls back on its own; a bug in a handler shows a message instead of closing the program; SIGTERM / poweroff saves and finalises a recording; recordings stop before the card fills.
+- **Test suite** (`software/tests/`, about 380 tests, PyQt5 and PyQt6) and a screenshot tool (`software/tools/screenshots.py`). See "Developing on a PC" in the README.
+- **Fixes found by the tests**: BAND stuck on "HF utility" (and picking 40 m, 20 m, 31 m or WWV selected "HF utility" instead, so band scan covered 3–18 MHz); releasing a manual scan HOLD did not resume; a refused timer recording left the radio on the timer's frequency; "00:00-24:00" schedules were never on; the CW decoder printed stray `E`s on noise; a changed web feed or damaged cache could stop the HF conditions panel being built.
 
 ## 1. Multi-band
 
@@ -38,3 +42,11 @@ Each needs parts and a small amount of code.
 - **RTC** (DS3231 or the Pi 5 RTC battery): correct UTC for schedules, the record timer and the scan log without Wi-Fi.
 - **Second encoder**: a dedicated volume/squelch knob so the main knob always tunes.
 - **UPS HAT / battery**: portable use, with a clean shutdown on low battery.
+
+## 3. Software, small
+
+- **CI**: run `python -m pytest` on every push with a GitHub Actions workflow (Python 3.11, `QT_QPA_PLATFORM=offscreen`, `apt install libegl1`). Not added yet because it cannot be tried from a development machine without pushing.
+- **multimon-ng exit detection**: if the decoder process dies mid-session the strip just goes quiet; it should switch the decoder to OFF with a message.
+- **Settings rows that only go up**: Spectrum rate, Volume and RF gain step upward and wrap with CHANGE; the knob goes both ways. A long-press for "down" would match the other rows.
+- **Signal markers at the span edge**: the noise-floor fit is a straight line, so the roll-off at the edge of the tuner's passband can produce a marker there.
+- **Verify on hardware**: everything in "Robustness" and "Fixes" above was checked on the simulator and the GNU Radio stand-in only.

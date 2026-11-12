@@ -29,12 +29,21 @@ class Signal:
         return self.hi_hz - self.lo_hz
 
 
+def _percentile_20(values: np.ndarray) -> float:
+    """``np.percentile(values, 20)`` without its per-call overhead (called for every segment of every detection)."""
+    pos = 0.2 * (len(values) - 1)
+    lo = int(pos)
+    hi = min(lo + 1, len(values) - 1)
+    part = np.partition(values, (lo, hi))
+    return float(part[lo] + (part[hi] - part[lo]) * (pos - lo))
+
+
 def noise_floor(db: np.ndarray) -> np.ndarray:
     """Per-bin noise floor: 20th percentile of each segment, interpolated across the frame."""
     n = len(db)
     segments = min(_FLOOR_SEGMENTS, max(1, n // 16))
     edges = np.linspace(0, n, segments + 1).astype(int)
-    levels = np.array([np.percentile(db[a:b], 20) for a, b in zip(edges[:-1], edges[1:])])
+    levels = np.array([_percentile_20(db[a:b]) for a, b in zip(edges[:-1], edges[1:])])
     centres = (edges[:-1] + edges[1:]) / 2.0
     # A segment filled by one wide signal (WFM) reads high. Fit the overall tilt with those
     # segments rejected, then never let a segment sit more than 3 dB above the fit.

@@ -95,12 +95,14 @@ class Scanner(QObject):
         if self.state.scan_held and not self._manual_hold:
             self.skip()
             return
+        # An automatic hold was handled above, so the held flag here is only ever our own.
         self._manual_hold = not self._manual_hold
-        self.state.set_scan_flags(True, self._manual_hold or self.state.scan_held)
+        self.state.set_scan_flags(True, self._manual_hold)
         self.status.emit("Scan HOLD" if self._manual_hold else "Scan resume")
         if not self._manual_hold:
             self._quiet_since = time.monotonic()
-            self._below_since = time.monotonic()
+            self._above_since = None
+            self._below_since = None
 
     def skip(self) -> None:
         if not self.active:

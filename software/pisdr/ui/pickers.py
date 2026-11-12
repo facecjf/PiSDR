@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import time
 
-from .. import config
+from .. import adsb, config
 from ..qt import Qt, QtWidgets, Signal
 from ..state import RadioState, format_step
 from . import style
@@ -152,6 +152,7 @@ class _GridPicker(Page):
 
 class BandPicker(_GridPicker):
     COLUMNS = 5
+    adsb_picked = Signal()       # the ADS-B band was chosen: the main window opens the map
 
     def __init__(self, state: RadioState, parent=None) -> None:
         super().__init__(state, "BAND", parent)
@@ -163,6 +164,8 @@ class BandPicker(_GridPicker):
 
     def activate(self, index: int) -> None:
         self.state.select_band(index)
+        if adsb.is_adsb_band(self.state.band):
+            self.adsb_picked.emit()
 
 
 class ModePicker(_GridPicker):

@@ -94,11 +94,13 @@ def check_radio() -> int:
     def optional_extras():
         from . import sysinfo
         from .backlight import Backlight
+        from .radio import adsb_decoder
         bl = Backlight()
         found = {
             "gr-rds (RDS)": sysinfo.have_module("rds"),
             "multimon-ng (decoders)": sysinfo.have_tool("multimon-ng"),
             "rtl_tcp (network mode)": sysinfo.have_tool("rtl_tcp"),
+            "dump1090 (ADS-B map)": adsb_decoder.problem_with(adsb_decoder.find_program()) is None,
             "backlight": bl.available and bl.writable,
         }
         for name, have in found.items():
@@ -141,6 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     if sys.platform.startswith("linux") and "QT_QPA_PLATFORM" not in os.environ:
         os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
 
+    from . import crashguard
     from .qt import QT_LIB, QtWidgets
     from .radio.backend import make_backend
     from .state import RadioState
@@ -154,6 +157,10 @@ def main(argv: list[str] | None = None) -> int:
     state.load()
     backend = make_backend(state, force_sim=args.sim)
     window = MainWindow(state, backend, windowed=args.windowed)
+    # A bug in one handler must not take the radio down (PyQt5 would abort the process),
+    # and shutdown / reboot / Ctrl-C must close the recording and save settings.
+    crashguard.install_excepthook(window.show_message, window.close)
+    wake_timer = crashguard.install_signal_handlers(app, window.close)  # noqa: F841 (kept alive)
 
     controls = None
     if not args.no_gpio:

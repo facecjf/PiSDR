@@ -50,7 +50,7 @@ class RecTimer(QObject):
             if time.monotonic() >= self._end_t:
                 self._finish()
             return
-        if not s.timer_armed or s.timer_target is None or s.network_mode:
+        if not s.timer_armed or s.timer_target is None or s.dongle_lent:
             return
         now = time.time() if now is None else now
         tm = time.gmtime(now)
@@ -68,16 +68,18 @@ class RecTimer(QObject):
         s = self.state
         target = s.timer_target
         self.started.emit()
-        self._restore = {"vfo_hz": s.vfo_hz, "mode": s.mode, "step_hz": s.step_hz}
+        restore = {"vfo_hz": s.vfo_hz, "mode": s.mode, "step_hz": s.step_hz}
         s.tune_to(target["vfo_hz"], target["mode"], target["step_hz"])
         if s.recording:
             s.set_recording(False)
-        s.set_timer_running(True)
-        self._end_t = time.monotonic() + remaining_min * 60
         s.set_recording(True)
-        if not s.recording:      # playback / network mode refused it
-            s.set_timer_running(False)
+        if not s.recording:      # card full or unwritable: put the radio back as it was
+            s.tune_to(restore["vfo_hz"], restore["mode"], restore["step_hz"])
+            log.warning("record timer: recording could not start")
             return
+        self._restore = restore
+        self._end_t = time.monotonic() + remaining_min * 60
+        s.set_timer_running(True)
         self.status.emit(f"Timer recording {target['name']} for {remaining_min} min")
         log.info("record timer started: %s for %d min", target["name"], remaining_min)
 

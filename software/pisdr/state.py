@@ -13,7 +13,7 @@ import json
 import logging
 import time
 
-from . import config
+from . import config, storage
 from .config import Band, KNOB_FUNCTIONS, MODES, STEPS_HZ
 from .memories import Memory, default_name, load_memories, save_memories
 from .qt import QObject, QTimer, Signal
@@ -32,10 +32,13 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 
 
 def _num(value, default: float, lo: float, hi: float, cast=int):
-    """A settings.json number clamped to [lo, hi]; *default* if it isn't a number."""
+    """A settings.json number clamped to [lo, hi]; *default* if it isn't a (finite) number."""
     try:
-        return cast(_clamp(float(value), lo, hi))
-    except (TypeError, ValueError):
+        number = float(value)
+        if number != number:      # NaN
+            raise ValueError(value)
+        return cast(_clamp(number, lo, hi))
+    except (TypeError, ValueError, OverflowError):
         return cast(default)
 
 
@@ -57,7 +60,7 @@ class RadioState(QObject):
                  "spectrum_zoom", "spectrum_avg", "peak_hold",
                  "spectrum_style", "wf_palette", "spectrum_labels", "snap_mode",
                  "timer_armed", "timer_start_min", "timer_length_min", "timer_daily", "timer_target",
-                 "decoder", "rds_enabled")
+                 "decoder", "rds_enabled", "adsb_range_nm", "adsb_labels")
 
     def __init__(self, bands: list[Band] | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -147,6 +150,14 @@ class RadioState(QObject):
         self.playing: str = ""             # path of the recording being played back
         self.network_mode: bool = False
 
+        # ADS-B map (the aircraft list is refreshed once a second while adsb_mode is on)
+        self.adsb_mode: bool = False
+        self.aircraft: list = []           # adsb.Aircraft
+        self.adsb_messages: int = 0        # Mode S messages decoded since the map was opened
+        self.adsb_error: str = ""          # why the decoder stopped, if it did
+        self.adsb_range_nm: int = config.ADSB_DEFAULT_RANGE_NM
+        self.adsb_labels: str = config.ADSB_LABELS[0]
+
         self._func_last_used = time.monotonic()
         self._knob_hist: collections.deque = collections.deque()
         self._knob_dir = 0
@@ -155,6 +166,10 @@ class RadioState(QObject):
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(2000)
         self._save_timer.timeout.connect(self.save)
+
+        self._rec_guard = QTimer(self)
+        self._rec_guard.setInterval(config.REC_SPACE_CHECK_MS)
+        self._rec_guard.timeout.connect(self._check_recording_space)
 
         self._func_timer = QTimer(self)
         self._func_timer.setInterval(500)
@@ -198,12 +213,14 @@ class RadioState(QObject):
     def set_vfo(self, hz: float) -> None:
         hz = int(round(max(config.FREQ_MIN, min(config.FREQ_MAX, hz))))
         self._set("vfo_hz", hz)
-        # Keep band_index in sync when tuning wanders into another band.
-        for i, band in enumerate(self.bands):
-            if band.contains(hz):
-                if i != self.band_index:
-                    self._set("band_index", i)
-                break
+        # Keep band_index in sync when tuning wanders into another band. Bands overlap
+        # ("HF utility" covers 40 m and 20 m), so stay in the current one while it still
+        # fits and otherwise take the narrowest: first-match made BAND stick on "HF utility".
+        if self.band.contains(hz):
+            return
+        inside = [i for i, band in enumerate(self.bands) if band.contains(hz)]
+        if inside:
+            self._set("band_index", min(inside, key=lambda i: self.bands[i].stop_hz - self.bands[i].start_hz))
 
     def tune_steps(self, n: int) -> None:
         """Move the VFO by *n* steps, snapping to the step grid like a real radio."""
@@ -341,10 +358,27 @@ class RadioState(QObject):
         self.message.emit("Bias tee ON (4.5 V on antenna port)" if on else "Bias tee off")
 
     def set_recording(self, on: bool) -> None:
-        if on and (self.playing or self.network_mode):
-            self.message.emit("Stop playback / network mode first")
+        if on and (self.playing or self.dongle_lent):
+            self.message.emit("Stop playback / network mode / the ADS-B map first")
             return
+        if on and not self.recording:
+            free = storage.free_bytes(config.RECORDINGS_DIR)
+            if free is not None and free < config.REC_MIN_FREE_MB * 1_000_000:
+                self.message.emit(f"Not enough free space to record ({free / 1e6:.0f} MB left)")
+                return
         self._set("recording", bool(on), persist=False)
+        if self.recording:
+            self._rec_guard.start()
+        else:
+            self._rec_guard.stop()
+
+    def _check_recording_space(self) -> None:
+        """Stop a running recording before it fills the card."""
+        free = storage.free_bytes(config.RECORDINGS_DIR)
+        if self.recording and free is not None and free < config.REC_STOP_FREE_MB * 1_000_000:
+            log.warning("recording stopped: %.0f MB free", free / 1e6)
+            self.set_recording(False)
+            self.message.emit("Recording stopped - storage is almost full")
 
     def toggle_recording(self) -> None:
         self.set_recording(not self.recording)
@@ -354,10 +388,10 @@ class RadioState(QObject):
         self.changed.emit("signal_db")
 
     def set_fft_fps(self, fps: int) -> None:
-        self._set("fft_fps", int(max(5, min(40, fps))))
+        self._set("fft_fps", int(_clamp(fps, config.FFT_FPS_MIN, config.FFT_FPS_MAX)))
 
     def set_waterfall_speed(self, rows: int) -> None:
-        self._set("waterfall_speed", int(max(1, min(4, rows))))
+        self._set("waterfall_speed", int(_clamp(rows, 1, config.WATERFALL_SPEED_MAX)))
 
     # ------------------------------------------------------------------ display
     def set_clock_utc(self, on: bool) -> None:
@@ -535,6 +569,30 @@ class RadioState(QObject):
 
     def set_network_mode(self, on: bool) -> None:
         self._set("network_mode", bool(on), persist=False)
+
+    @property
+    def dongle_lent(self) -> bool:
+        """True while another program (rtl_tcp, the ADS-B decoder) has the dongle."""
+        return self.network_mode or self.adsb_mode
+
+    # ------------------------------------------------------------------ ADS-B map
+    def set_adsb_mode(self, on: bool) -> None:
+        self._set("adsb_mode", bool(on), persist=False)
+
+    def set_aircraft(self, aircraft: list, messages: int = 0, error: str = "") -> None:
+        self.aircraft = list(aircraft)
+        self.adsb_messages = int(messages)
+        self.adsb_error = str(error or "")
+        self.changed.emit("aircraft")
+
+    def step_adsb_range(self, delta: int) -> None:
+        """Next larger (+1) or smaller (-1) map range; stops at the ends."""
+        ranges = [nm for nm, _ring in config.ADSB_RANGES_NM]
+        index = ranges.index(self.adsb_range_nm) if self.adsb_range_nm in ranges else 0
+        self._set("adsb_range_nm", ranges[int(_clamp(index + delta, 0, len(ranges) - 1))])
+
+    def cycle_adsb_labels(self, delta: int = 1) -> None:
+        self._set("adsb_labels", _cycle(config.ADSB_LABELS, self.adsb_labels, delta))
 
     # ------------------------------------------------------------------ memories
     @property
@@ -750,19 +808,28 @@ class RadioState(QObject):
 
     # ------------------------------------------------------------------ persistence
     def save(self) -> None:
+        self._save_timer.stop()
         try:
-            config.USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            data = {k: getattr(self, k) for k in self.PERSISTED}
-            with open(config.SETTINGS_FILE, "w", encoding="utf-8") as fh:
-                json.dump(data, fh, indent=2)
-        except OSError as exc:
+            storage.write_json_atomic(config.SETTINGS_FILE, {k: getattr(self, k) for k in self.PERSISTED})
+        except (OSError, TypeError, ValueError) as exc:
             log.warning("Could not save settings: %s", exc)
 
     def load(self) -> None:
         try:
             with open(config.SETTINGS_FILE, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
-        except (OSError, ValueError):
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            log.warning("Could not read settings: %s", exc)
+            return
+        except ValueError as exc:
+            log.warning("settings.json is not valid JSON (%s); starting from defaults", exc)
+            storage.set_aside(config.SETTINGS_FILE)
+            return
+        if not isinstance(data, dict):
+            log.warning("settings.json is not a settings file; starting from defaults")
+            storage.set_aside(config.SETTINGS_FILE)
             return
         defaults = {k: getattr(self, k) for k in self.PERSISTED}
         for key in self.PERSISTED:
@@ -780,15 +847,25 @@ class RadioState(QObject):
             self.changed.emit(key)
 
     def _validate(self) -> None:
+        """Force every persisted field into its legal range; a bad value falls back to its
+        default without touching the others (settings.json may be hand-edited or damaged)."""
         self.band_index = _num(self.band_index, 0, 0, len(self.bands) - 1)
-        self.step_index = _num(self.step_index, 0, 0, len(STEPS_HZ) - 1)
-        if self.mode not in MODES:
-            self.mode = MODES[0]
+        self.step_index = _num(self.step_index, config.DEFAULT_STEP_INDEX, 0, len(STEPS_HZ) - 1)
+        self.mode = _choice(self.mode, MODES, MODES[0])
         self.vfo_hz = _num(self.vfo_hz, self.bands[self.band_index].default_hz,
                            config.FREQ_MIN, config.FREQ_MAX)
-        self.dsp_hpf = bool(self.dsp_hpf)
-        self.dsp_lpf = bool(self.dsp_lpf)
-        self.dsp_notch = bool(self.dsp_notch)
+        self.volume = _num(self.volume, 60, 0, 100)
+        self.squelch_db = _num(self.squelch_db, config.SQUELCH_MIN_DB,
+                               config.SQUELCH_MIN_DB, config.SQUELCH_MAX_DB, float)
+        self.gain_db = _num(self.gain_db, config.DEFAULT_GAIN_DB,
+                            config.GAIN_MIN_DB, config.GAIN_MAX_DB, float)
+        self.agc = _flag(self.agc, False)
+        self.bias_tee = self.bias_tee is True   # 4.5 V on the antenna port: only if clearly asked for
+        self.fft_fps = _num(self.fft_fps, config.FFT_FPS, config.FFT_FPS_MIN, config.FFT_FPS_MAX)
+        self.waterfall_speed = _num(self.waterfall_speed, 1, 1, config.WATERFALL_SPEED_MAX)
+        self.dsp_hpf = _flag(self.dsp_hpf, True)
+        self.dsp_lpf = _flag(self.dsp_lpf, False)
+        self.dsp_notch = _flag(self.dsp_notch, False)
         self.dsp_hpf_hz = _num(self.dsp_hpf_hz, config.DSP_HPF_HZ_DEFAULT,
                                config.DSP_HPF_HZ_MIN, config.DSP_HPF_HZ_MAX)
         self.dsp_lpf_hz = _num(self.dsp_lpf_hz, config.DSP_LPF_HZ_DEFAULT,
@@ -797,68 +874,75 @@ class RadioState(QObject):
                                  config.DSP_NOTCH_HZ_MIN, config.DSP_NOTCH_HZ_MAX)
         self.dsp_nr_level = _num(self.dsp_nr_level, 0, 0, config.DSP_LEVEL_MAX)
         self.dsp_nb_level = _num(self.dsp_nb_level, 0, 0, config.DSP_LEVEL_MAX)
-        if self.theme not in config.THEME_NAMES:
-            self.theme = config.DEFAULT_THEME
-        if self.hf_panel not in config.HF_PANEL_MODES:
-            self.hf_panel = "AUTO"
-        if self.wx_units not in ("imperial", "metric"):
-            self.wx_units = "imperial"
-        for key in ("wx_lat", "wx_lon"):
-            value = getattr(self, key)
-            setattr(self, key, float(value) if isinstance(value, (int, float)) else None)
+        self.theme = _choice(self.theme, config.THEME_NAMES, config.DEFAULT_THEME)
+        self.hf_panel = _choice(self.hf_panel, config.HF_PANEL_MODES, "AUTO")
+        self.wx_units = _choice(self.wx_units, ("imperial", "metric"), "imperial")
+        lat, lon = _coordinate(self.wx_lat, 90.0), _coordinate(self.wx_lon, 180.0)
+        self.wx_lat, self.wx_lon = (lat, lon) if lat is not None and lon is not None else (None, None)
 
         filt = dict(config.DEFAULT_FILTER_INDEX)
         if isinstance(self.filter_index, dict):
-            for mode, index in self.filter_index.items():
-                if mode in filt and isinstance(index, int):
-                    filt[mode] = int(_clamp(index, 0, len(config.FILTER_WIDTHS[mode]) - 1))
+            for mode, widths in config.FILTER_WIDTHS.items():
+                filt[mode] = _num(self.filter_index.get(mode), filt[mode], 0, len(widths) - 1)
         self.filter_index = filt
         self.ppm = _num(self.ppm, config.PPM_CORRECTION, config.PPM_MIN, config.PPM_MAX)
         self.smeter_cal_db = _num(self.smeter_cal_db, config.SMETER_CAL_DB,
                                   config.SMETER_CAL_MIN_DB, config.SMETER_CAL_MAX_DB, float)
         self.cw_pitch_hz = _num(self.cw_pitch_hz, config.CW_PITCH_HZ,
                                 config.CW_PITCH_MIN_HZ, config.CW_PITCH_MAX_HZ)
-        if self.scan_dwell_ms not in config.SCAN_DWELL_CHOICES_MS:
-            self.scan_dwell_ms = config.SCAN_DWELL_MS
-        if self.scan_resume_ms not in config.SCAN_RESUME_CHOICES_MS:
-            self.scan_resume_ms = config.SCAN_RESUME_MS
+        self.scan_dwell_ms = _choice(self.scan_dwell_ms, config.SCAN_DWELL_CHOICES_MS, config.SCAN_DWELL_MS)
+        self.scan_resume_ms = _choice(self.scan_resume_ms, config.SCAN_RESUME_CHOICES_MS, config.SCAN_RESUME_MS)
         self.scan_floor_db = _num(self.scan_floor_db, config.SCAN_FLOOR_DB,
                                   config.SCAN_FLOOR_MIN_DB, config.SCAN_FLOOR_MAX_DB, float)
         lockouts = self.lockouts if isinstance(self.lockouts, list) else []
         self.lockouts = [int(hz) for hz in lockouts
-                         if isinstance(hz, (int, float))][-config.MAX_LOCKOUTS:]
-        self.memory_group = str(self.memory_group)
-        if self.memory_group not in self.memory_groups:
-            self.memory_group = config.MEMORY_GROUP_ALL
-        self.memory_scan_on_now = bool(self.memory_scan_on_now)
+                         if isinstance(hz, (int, float)) and not isinstance(hz, bool)
+                         and config.FREQ_MIN <= hz <= config.FREQ_MAX][-config.MAX_LOCKOUTS:]
+        self.memory_group = _choice(self.memory_group, self.memory_groups, config.MEMORY_GROUP_ALL)
+        self.memory_scan_on_now = _flag(self.memory_scan_on_now, False)
         self.priority = _valid_target(self.priority)
-        if self.priority_interval_s not in config.PRIORITY_INTERVAL_CHOICES_S:
-            self.priority_interval_s = 3
-        self.clock_utc = bool(self.clock_utc)
+        self.priority_interval_s = _choice(self.priority_interval_s, config.PRIORITY_INTERVAL_CHOICES_S, 3)
+        self.clock_utc = _flag(self.clock_utc, False)
         self.brightness = _num(self.brightness, 100, config.BRIGHTNESS_MIN_PCT, 100)
-        if self.dim_after_s not in config.DIM_AFTER_CHOICES_S:
-            self.dim_after_s = 0
-        self.knob_accel = bool(self.knob_accel)
-        if self.spectrum_zoom not in config.SPECTRUM_ZOOMS:
-            self.spectrum_zoom = 1
+        self.dim_after_s = _choice(self.dim_after_s, config.DIM_AFTER_CHOICES_S, 0)
+        self.knob_accel = _flag(self.knob_accel, True)
+        self.spectrum_zoom = _choice(self.spectrum_zoom, config.SPECTRUM_ZOOMS, 1)
         self.spectrum_avg = _num(self.spectrum_avg, config.DEFAULT_SPECTRUM_AVG,
                                  0, len(config.SPECTRUM_AVG_NAMES) - 1)
-        self.peak_hold = bool(self.peak_hold)
-        for key, choices in (("spectrum_style", config.SPECTRUM_STYLES),
-                             ("wf_palette", config.WATERFALL_PALETTES),
-                             ("spectrum_labels", config.SPECTRUM_LABELS),
-                             ("snap_mode", config.SNAP_MODES)):
-            if getattr(self, key) not in choices:
-                setattr(self, key, choices[0])
+        self.peak_hold = _flag(self.peak_hold, False)
+        self.spectrum_style = _choice(self.spectrum_style, config.SPECTRUM_STYLES, config.SPECTRUM_STYLES[0])
+        self.wf_palette = _choice(self.wf_palette, config.WATERFALL_PALETTES, config.WATERFALL_PALETTES[0])
+        self.spectrum_labels = _choice(self.spectrum_labels, config.SPECTRUM_LABELS, config.SPECTRUM_LABELS[0])
+        self.snap_mode = _choice(self.snap_mode, config.SNAP_MODES, config.SNAP_MODES[0])
         self.timer_start_min = _num(self.timer_start_min, 0, 0, 24 * 60 - 1)
-        if self.timer_length_min not in config.REC_TIMER_LENGTH_CHOICES_MIN:
-            self.timer_length_min = 30
-        self.timer_daily = bool(self.timer_daily)
+        self.timer_length_min = _choice(self.timer_length_min, config.REC_TIMER_LENGTH_CHOICES_MIN, 30)
+        self.timer_daily = _flag(self.timer_daily, False)
         self.timer_target = _valid_target(self.timer_target)
-        self.timer_armed = bool(self.timer_armed) and self.timer_target is not None
-        if self.decoder not in config.DECODERS:
-            self.decoder = "OFF"
-        self.rds_enabled = bool(self.rds_enabled)
+        self.timer_armed = _flag(self.timer_armed, False) and self.timer_target is not None
+        self.decoder = _choice(self.decoder, tuple(config.DECODERS), "OFF")
+        self.rds_enabled = _flag(self.rds_enabled, True)
+        self.adsb_range_nm = _choice(self.adsb_range_nm, [nm for nm, _ring in config.ADSB_RANGES_NM],
+                                     config.ADSB_DEFAULT_RANGE_NM)
+        self.adsb_labels = _choice(self.adsb_labels, config.ADSB_LABELS, config.ADSB_LABELS[0])
+
+
+def _choice(value, choices, default):
+    """*value* if it is one of *choices* (and the same type: True is not 1), else *default*."""
+    for option in choices:
+        if type(value) is type(option) and value == option:
+            return option
+    return default
+
+
+def _flag(value, default: bool) -> bool:
+    return value if isinstance(value, bool) else default
+
+
+def _coordinate(value, limit: float) -> float | None:
+    """A latitude / longitude in degrees, or None (= find the location from the IP address)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if -limit <= value <= limit else None
 
 
 def _valid_target(value) -> dict | None:
@@ -866,11 +950,14 @@ def _valid_target(value) -> dict | None:
     if not isinstance(value, dict):
         return None
     try:
-        mode = value["mode"] if value.get("mode") in MODES else "AM"
-        vfo = int(_clamp(int(value["vfo_hz"]), config.FREQ_MIN, config.FREQ_MAX))
+        mode = _choice(value.get("mode"), MODES, "AM")
+        vfo = int(float(value["vfo_hz"]))
+        if not config.FREQ_MIN <= vfo <= config.FREQ_MAX:
+            return None
+        step = _num(value.get("step_hz"), 1000, STEPS_HZ[0], STEPS_HZ[-1])
         return {"name": str(value.get("name") or default_name(vfo, mode)), "vfo_hz": vfo,
-                "mode": mode, "step_hz": int(value.get("step_hz", 1000))}
-    except (KeyError, TypeError, ValueError):
+                "mode": mode, "step_hz": step}
+    except (KeyError, TypeError, ValueError, OverflowError):
         return None
 
 
@@ -878,17 +965,26 @@ def _load_scan_log() -> list[dict]:
     try:
         with open(config.SCAN_LOG_FILE, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-        return [h for h in data.get("hits", []) if isinstance(h, dict)][: config.SCAN_LOG_MAX]
-    except (OSError, ValueError, AttributeError):
+        return [h for h in data.get("hits", []) if _valid_hit(h)][: config.SCAN_LOG_MAX]
+    except (OSError, ValueError, AttributeError, TypeError):
         return []
+
+
+def _valid_hit(hit) -> bool:
+    """A scan-log entry the log page can show, tune and lock out."""
+    if not isinstance(hit, dict) or hit.get("mode") not in MODES:
+        return False
+    numbers = [hit.get(key, 0) for key in ("vfo_hz", "t", "peak_db", "dur_s")]
+    if not all(isinstance(n, (int, float)) and not isinstance(n, bool) and n == n for n in numbers):
+        return False
+    return config.FREQ_MIN <= hit["vfo_hz"] <= config.FREQ_MAX and abs(hit.get("t", 0)) < 1e11
 
 
 def _save_scan_log(hits: list[dict]) -> None:
     try:
-        config.USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        with open(config.SCAN_LOG_FILE, "w", encoding="utf-8") as fh:
-            json.dump({"hits": hits}, fh, indent=1)
-    except OSError as exc:
+        # Written on every hit while scanning, so skip the slow flush-to-card.
+        storage.write_json_atomic(config.SCAN_LOG_FILE, {"hits": hits}, indent=1, durable=False)
+    except (OSError, TypeError, ValueError) as exc:
         log.warning("Could not save scan log: %s", exc)
 
 

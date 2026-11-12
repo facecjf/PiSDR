@@ -5,7 +5,8 @@ deterministic "stations" scattered across every 1.92 MHz block so there is alway
 something to tune to, a DC spike where the dongle would have one, and a slowly fading
 carrier wherever the VFO happens to be so the S-meter moves. No audio is generated.
 
-RDS, data decoders, playback and network mode are faked just enough to exercise the UI.
+RDS, data decoders, playback, network mode and ADS-B traffic are faked just enough to
+exercise the UI.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ import wave
 import numpy as np
 
 from .. import config
+from ..adsb import SimTraffic, receiver_position
 from ..qt import QTimer
 from .backend import Backend
 from .cw_decoder import MORSE_TABLE, MorseDecoder
@@ -78,6 +80,7 @@ class SimBackend(Backend):
         self._play_timer = QTimer(self)
         self._play_timer.setSingleShot(True)
         self._play_timer.timeout.connect(self.playback_finished.emit)
+        self._traffic: SimTraffic | None = None
 
     @property
     def rds_available(self) -> bool:
@@ -155,7 +158,7 @@ class SimBackend(Backend):
 
     def _emit_decoder_line(self) -> None:
         lines = _SIM_DECODER_LINES.get(self._dec_name)
-        if not lines or self.state.network_mode:
+        if not lines or self.state.dongle_lent:
             return
         self.state.append_decoder_line(lines[self._dec_i % len(lines)])
         self._dec_i += 1
@@ -179,6 +182,22 @@ class SimBackend(Backend):
         else:
             self._timer.start(int(1000 / self.state.fft_fps))
         return None
+
+    def _hw_adsb(self, on: bool) -> str | None:
+        if on:
+            self._timer.stop()
+            where = receiver_position(self.state) or config.ADSB_SIM_HOME
+            self._traffic = SimTraffic(where[0], where[1])
+        else:
+            self._traffic = None
+            self._timer.start(int(1000 / self.state.fft_fps))
+        return None
+
+    def _hw_adsb_poll(self) -> tuple[list, int, str]:
+        if self._traffic is None:
+            return [], 0, ""
+        aircraft, messages = self._traffic.aircraft()
+        return aircraft, messages, ""
 
     # ------------------------------------------------------------------ synthesis
     def _make_stations(self, center_hz: float) -> list[tuple[float, float, float, str]]:

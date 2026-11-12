@@ -7,7 +7,7 @@ import time
 import wave
 from pathlib import Path
 
-from .. import config, sysinfo
+from .. import config, storage, sysinfo
 from ..qt import Qt, QTimer, QtWidgets, Signal
 from ..state import RadioState
 from . import style
@@ -169,6 +169,24 @@ def _recording_detail(path: Path) -> str:
         return "?"
 
 
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:      # deleted between listing and sorting
+        return 0.0
+
+
+def _free_space_note() -> str:
+    """'  ·  12.3 GB free (about 35 h)' for the card the recordings go to."""
+    free = storage.free_bytes(config.RECORDINGS_DIR)
+    if free is None:
+        return ""
+    usable = max(0, free - config.REC_STOP_FREE_MB * 1_000_000)
+    minutes = usable / config.REC_BYTES_PER_S / 60
+    length = f"{minutes / 60:.0f} h" if minutes >= 120 else f"{minutes:.0f} min"
+    return f"  \u00b7  {free / 1e9:.1f} GB free (about {length})"
+
+
 class RecordingsPage(_ListPage):
     """Recordings in ~/Recordings, newest first. PLAY plays through the radio audio."""
 
@@ -190,8 +208,9 @@ class RecordingsPage(_ListPage):
             files = list(config.RECORDINGS_DIR.glob("*.wav"))
         except OSError:
             files = []
-        files.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+        files.sort(key=_mtime, reverse=True)
         self._details = {}
+        self.title.setText("RECORDINGS" + _free_space_note())
         return files
 
     def row_text(self, item: Path) -> tuple[str, str]:

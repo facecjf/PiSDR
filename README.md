@@ -17,6 +17,9 @@ owner expects rather than driving a desktop program through a remote-control soc
 | `docs/05_backlog.md` | What has been added and what is next (multi-band with a second tuner, hardware add-ons) |
 | `software/pisdr/` | The receiver application (`python3 -m pisdr`) |
 | `software/config/bands.json` | Editable band / preset table |
+| `software/config/outlines.npz` | Coastlines, lakes and borders for the ADS-B map (Natural Earth, public domain; rebuilt by `software/tools/build_outlines.py`) |
+| `software/tests/` | Test suite (`python -m pytest`); runs on a PC with no radio or display |
+| `software/tools/screenshots.py` | Renders the screenshots in `docs/images/` from the simulator |
 | `cad/` | Parametric OpenSCAD sources for every printed part plus `export.ps1` to render STLs |
 | `Original/` | The first-pass ChatGPT design, kept unchanged for reference |
 
@@ -58,6 +61,16 @@ Full table with notes in `docs/01_hardware.md`.
 
 ![Main screen of the application running on the simulated backend](docs/images/ui_main_sim.png)
 
+Screenshots are rendered from the simulated backend by `software/tools/screenshots.py`; the
+HF conditions numbers and the aircraft in them are sample values.
+
+| | |
+|---|---|
+| ![HF conditions panel beside the spectrum on 40 m](docs/images/ui_hf_conditions.png) | ![Spectrum zoomed to x8 on a tagged signal](docs/images/ui_zoom.png) |
+| ![Band picker](docs/images/ui_band_picker.png) | ![Settings, DISPLAY tab](docs/images/ui_settings.png) |
+| ![Memories page with the HF presets loaded](docs/images/ui_memories.png) | ![Inferno theme](docs/images/ui_theme_inferno.png) |
+| ![Green theme](docs/images/ui_theme_green.png) | ![ADS-B aircraft map](docs/images/ui_adsb_map.png) |
+
 ## Controls at a glance
 
 ```text
@@ -89,11 +102,16 @@ Full table with notes in `docs/01_hardware.md`.
   zoom and seek signal to signal. A tap near a signal snaps to it.
 - Below 30 MHz an **HF conditions** panel (SFI/SSN/A/K, band conditions, 24 h Kp, local
   weather) sits beside the spectrum; the `☀ SFI K` chip in the top bar toggles it.
+- Picking the **ADS-B 1090** band opens an **aircraft map**: a radar-style plot with range
+  rings, coastlines, callsigns, flight levels and trails, and a list of the nearest
+  aircraft. The keys become `ZOOM − / ZOOM + / LABELS / BACK`, the knob selects an aircraft.
+  The dongle is lent to `dump1090` while the map is open (see `docs/02_software_setup.md`
+  section 5f).
 - Encoder push cycles the tuning step (10 Hz ... 1 MHz). Long-press `FUNC` opens Settings,
   in five tabs: RADIO (filter widths, PPM, S-meter cal, CW pitch, decoders), AUDIO (DSP,
   recordings browser, record timer), DISPLAY (themes, brightness/dimming, UTC clock, knob
   acceleration, spectrum zoom/averaging/peak hold/style/colours/labels), SCAN (timing, priority, lockouts, log)
-  and SYSTEM (presets, rtl_tcp network mode, shutdown).
+  and SYSTEM (presets, rtl_tcp network mode, ADS-B map, shutdown).
 
 ## Build order
 
@@ -111,9 +129,39 @@ backend:
 
 ```powershell
 cd software
-python -m pip install numpy pyqtgraph PyQt5   # PyQt6 also works
+python -m pip install -r requirements-dev.txt   # numpy, pyqtgraph, PyQt5 (PyQt6 also works), pytest
 python -m pisdr --sim --windowed
 ```
 
 On the Pi the real GNU Radio backend is selected automatically when `gnuradio` is
 importable and an RTL-SDR is attached.
+
+### Tests
+
+```powershell
+cd software
+python -m pytest
+```
+
+About 380 tests in about a minute, with no radio, display or network. They cover the
+settings and memory files (including damaged ones), tuning, scanning, the record timer,
+signal detection, the Morse decoder, the ADS-B map, and every page of the UI including a few
+thousand random key presses, knob turns and taps. The real flowgraph code in
+`pisdr/radio/flowgraph.py` is exercised against a stand-in for GNU Radio
+(`tests/fakegr.py`) that records which blocks are connected to which; this checks the
+wiring and the order of operations, not the signal processing. The ADS-B tests use a shell
+script in place of `dump1090`; if a real one is installed (or `PISDR_TEST_DUMP1090` names
+one) a further test feeds it a synthetic recording and checks the decoded positions.
+Nothing here replaces trying a change on the Pi with the dongle attached:
+`python3 -m pisdr --check` there.
+
+### Screenshots
+
+```powershell
+cd software
+python tools/screenshots.py              # rewrites ../docs/images/ui_*.png
+python tools/screenshots.py C:\temp\shots # or writes them somewhere else
+```
+
+It runs without a window and with a throw-away settings folder, so it does not touch your
+own settings or memories. It is also the quickest way to look at a UI change at 800x480.

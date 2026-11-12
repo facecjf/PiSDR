@@ -22,7 +22,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from . import config
+from . import config, storage
 from .qt import QObject, QTimer, Signal
 
 log = logging.getLogger(__name__)
@@ -78,8 +78,51 @@ class SpaceWx:
     @classmethod
     def from_json(cls, text: str) -> "SpaceWx":
         data = json.loads(text)
+        if not isinstance(data, dict):
+            raise ValueError("not a space weather cache")
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
-        return cls(**known)
+        return cls(**known).cleaned()
+
+    def cleaned(self) -> "SpaceWx":
+        """Force every field to the type the panel formats it as.
+
+        The values come from three web services and a cache file. A feed that starts sending
+        a string where a number used to be must blank one reading, not stop the radio.
+        """
+        for name in ("sfi", "ssn", "a_index", "k_index", "aurora"):
+            setattr(self, name, _number(getattr(self, name), int))
+        for name in ("solar_wind", "bz"):
+            setattr(self, name, _number(getattr(self, name)))
+        for name in ("xray", "geomag", "noise", "muf", "solar_updated"):
+            value = getattr(self, name)
+            setattr(self, name, value[:40] if isinstance(value, str) else "")
+        for name in ("solar_at", "kp_at", "wx_at"):
+            setattr(self, name, _number(getattr(self, name)) or 0.0)
+        bands = self.bands if isinstance(self.bands, dict) else {}
+        self.bands = {name: [str(text)[:8] for text in pair] for name, pair in bands.items()
+                      if name in BAND_GROUPS and isinstance(pair, (list, tuple)) and len(pair) == 2}
+        history = self.kp_history if isinstance(self.kp_history, list) else []
+        self.kp_history = [kp for kp in (_number(v) for v in history) if kp is not None and 0.0 <= kp <= 9.0]
+        wx = self.wx if isinstance(self.wx, dict) else {}
+        clean: dict[str, Any] = {}
+        for key, value in wx.items():
+            if key in ("temp", "humidity", "pressure", "wind", "wind_dir", "lat", "lon"):
+                clean[key] = _number(value)
+            elif key == "code":
+                clean[key] = _number(value, int)
+            elif key in ("temp_unit", "wind_unit", "desc", "city", "geo"):
+                clean[key] = value[:40] if isinstance(value, str) else ""
+        self.wx = clean
+        return self
+
+
+def _number(value, cast=float):
+    """*value* as a finite number, or None for anything else (strings, lists, NaN, booleans)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value != value or abs(value) > 1e12:
+        return None
+    return cast(value)
 
 
 # --------------------------------------------------------------------------- parsers
@@ -178,15 +221,13 @@ def load_cached(path=None) -> SpaceWx:
     try:
         with open(path or config.SPACEWX_FILE, "r", encoding="utf-8") as fh:
             return SpaceWx.from_json(fh.read())
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, AttributeError):
         return SpaceWx()
 
 
 def save_cached(data: SpaceWx, path=None) -> None:
     try:
-        config.USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        with open(path or config.SPACEWX_FILE, "w", encoding="utf-8") as fh:
-            fh.write(data.to_json())
+        storage.write_text_atomic(path or config.SPACEWX_FILE, data.to_json(), durable=False)
     except OSError as exc:
         log.debug("Could not cache space weather: %s", exc)
 
@@ -285,6 +326,7 @@ class SpaceWxFetcher(QObject):
         for name, value in payload.items():
             setattr(self.data, name, value)
         setattr(self.data, f"{key}_at", now)
+        self.data.cleaned()
         self._next_try[key] = now + config.SPACEWX_PERIOD_S[key]
         save_cached(self.data)
         self.state.set_space_wx(self.data)
