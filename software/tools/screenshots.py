@@ -114,6 +114,8 @@ def main(argv: list[str]) -> int:
         studio.shot(f"ui_theme_{theme.lower()}", settle_s=1.0)
     s.set_theme(config.DEFAULT_THEME)
 
+    w.show_page(w.PAGE_MENU)
+    studio.shot("ui_menu")
     w.show_page(w.PAGE_BAND)
     studio.shot("ui_band_picker")
     w.show_page(w.PAGE_SETTINGS)

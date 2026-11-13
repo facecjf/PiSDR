@@ -60,7 +60,8 @@ class RadioState(QObject):
                  "spectrum_zoom", "spectrum_avg", "peak_hold",
                  "spectrum_style", "wf_palette", "spectrum_labels", "snap_mode",
                  "timer_armed", "timer_start_min", "timer_length_min", "timer_daily", "timer_target",
-                 "decoder", "rds_enabled", "adsb_range_nm", "adsb_labels")
+                 "decoder", "rds_enabled", "adsb_range_nm", "adsb_labels",
+                 "vfo_b", "sliders_visible")
 
     def __init__(self, bands: list[Band] | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -70,6 +71,8 @@ class RadioState(QObject):
         self.vfo_hz: int = first.default_hz
         self.mode: str = first.mode
         self.step_index: int = config.step_index_for(first.step_hz)
+        # VFO B: a second frequency / mode / step to flip to with A<>B (there is one tuner).
+        self.vfo_b: dict = {"vfo_hz": first.default_hz, "mode": first.mode, "step_hz": first.step_hz}
         self.volume: int = 60              # 0..100
         self.squelch_db: float = -100.0    # open
         self.gain_db: float = config.DEFAULT_GAIN_DB
@@ -125,6 +128,7 @@ class RadioState(QObject):
         self.brightness: int = 100         # percent
         self.dim_after_s: int = 0          # 0 = never
         self.knob_accel: bool = True
+        self.sliders_visible: bool = True  # the AF / RF / SQL sliders under the spectrum (HIDE button)
         self.spectrum_zoom: int = 1
         self.spectrum_avg: int = config.DEFAULT_SPECTRUM_AVG
         self.peak_hold: bool = False
@@ -244,6 +248,22 @@ class RadioState(QObject):
         self.set_mode(mode)
         self.set_step_hz(step_hz)
         self.set_vfo(vfo_hz)
+
+    # ------------------------------------------------------------------ VFO A / B
+    def _vfo_a(self) -> dict:
+        return {"vfo_hz": self.vfo_hz, "mode": self.mode, "step_hz": self.step_hz}
+
+    def swap_vfo(self) -> None:
+        """A<>B: tune what VFO B holds; what was tuned becomes VFO B."""
+        b = self.vfo_b
+        self.vfo_b = self._vfo_a()
+        self.tune_to(b["vfo_hz"], b["mode"], b["step_hz"])
+        self.changed.emit("vfo_b")
+        self._save_timer.start()
+
+    def copy_vfo_to_b(self) -> None:
+        """A>B: VFO B becomes a copy of the tuned frequency, mode and step."""
+        self._set("vfo_b", self._vfo_a())
 
     # ------------------------------------------------------------------ mode / band
     def set_mode(self, mode: str) -> None:
@@ -404,6 +424,9 @@ class RadioState(QObject):
     def cycle_dim_after(self, delta: int = 1) -> None:
         self._set("dim_after_s", _cycle(config.DIM_AFTER_CHOICES_S, self.dim_after_s, delta))
 
+    def set_sliders_visible(self, on: bool) -> None:
+        self._set("sliders_visible", bool(on))
+
     def set_knob_accel(self, on: bool) -> None:
         self._set("knob_accel", bool(on))
 
@@ -497,7 +520,7 @@ class RadioState(QObject):
         self.set_hf_panel(modes[(i + delta) % len(modes)])
 
     def toggle_hf_panel(self) -> None:
-        """Top-bar tap: hide the panel if it is showing, otherwise pin it on."""
+        """Tap on the SFI / K chip: hide the panel if it is showing, otherwise pin it on."""
         self.set_hf_panel("OFF" if self.hf_panel_visible else "ON")
         self.message.emit("HF conditions " + ("hidden" if self.hf_panel == "OFF" else "shown"))
 
@@ -925,6 +948,10 @@ class RadioState(QObject):
         self.brightness = _num(self.brightness, 100, config.BRIGHTNESS_MIN_PCT, 100)
         self.dim_after_s = _choice(self.dim_after_s, config.DIM_AFTER_CHOICES_S, 0)
         self.knob_accel = _flag(self.knob_accel, True)
+        self.sliders_visible = _flag(self.sliders_visible, True)
+        target = _valid_target(self.vfo_b)
+        self.vfo_b = ({key: target[key] for key in ("vfo_hz", "mode", "step_hz")} if target
+                      else self._vfo_a())
         self.spectrum_zoom = _choice(self.spectrum_zoom, config.SPECTRUM_ZOOMS, 1)
         self.spectrum_avg = _num(self.spectrum_avg, config.DEFAULT_SPECTRUM_AVG,
                                  0, len(config.SPECTRUM_AVG_NAMES) - 1)

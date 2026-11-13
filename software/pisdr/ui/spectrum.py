@@ -24,7 +24,7 @@ pg.setConfigOptions(imageAxisOrder="row-major", antialias=False, background=styl
 _FILL_FLOOR_DB = -300.0      # fill the trace down past the bottom of any view
 _WF_EMPTY_DB = -300.0        # below any level range, so unfilled waterfall rows draw as colour 0
 _TAG_ROW_PX = 15
-_WF_AXIS_PX = 20
+_FREQ_AXIS_PX = 20
 
 
 def _colormap(stops: list) -> pg.ColorMap:
@@ -108,8 +108,8 @@ class SpectrumWaterfall(QtWidgets.QWidget):
 
         self._build_spectrum_plot()
         self._build_waterfall_plot()
-        self.glw.ci.layout.setRowStretchFactor(0, 45)
-        self.glw.ci.layout.setRowStretchFactor(1, 55)
+        self.glw.ci.layout.setRowStretchFactor(0, 55)      # includes the frequency scale
+        self.glw.ci.layout.setRowStretchFactor(1, 45)
 
         self.controls = _Controls(self)
         self.controls.seek.connect(self.seek)
@@ -135,7 +135,11 @@ class SpectrumWaterfall(QtWidgets.QWidget):
         self.spec_plot.setYRange(-120, -20, padding=0)
         self.spec_plot.getAxis("left").setWidth(34)
         self.spec_plot.getAxis("left").setStyle(tickFont=_font(11), tickLength=-4)
+        # Frequency scale along the top of the panadapter, as on piHPSDR.
         self.spec_plot.hideAxis("bottom")
+        self.spec_plot.showAxis("top")
+        self.spec_plot.getAxis("top").setStyle(tickFont=_font(11), tickLength=-4, showValues=True)
+        self.spec_plot.getAxis("top").setHeight(_FREQ_AXIS_PX)
         self.peak_curve = self.spec_plot.plot()
         self.spec_curve = self.spec_plot.plot()
         for curve in (self.peak_curve, self.spec_curve):
@@ -170,8 +174,7 @@ class SpectrumWaterfall(QtWidgets.QWidget):
         self.wf_plot.setXLink(self.spec_plot)
         self.wf_plot.getAxis("left").setWidth(34)
         self.wf_plot.getAxis("left").setStyle(showValues=False, tickLength=0)
-        self.wf_plot.getAxis("bottom").setStyle(tickFont=_font(11), tickLength=-4)
-        self.wf_plot.getAxis("bottom").setHeight(_WF_AXIS_PX)
+        self.wf_plot.hideAxis("bottom")
         self.wf_plot.setYRange(0, self._rows, padding=0)
         self.wf_plot.invertY(True)
         self.wf_img = pg.ImageItem(self._wf)
@@ -205,7 +208,7 @@ class SpectrumWaterfall(QtWidgets.QWidget):
         super().resizeEvent(event)
         # Bottom-right of the waterfall: covers only the oldest history, never the labels.
         self.controls.move(self.width() - self.controls.width() - 4,
-                           self.height() - _WF_AXIS_PX - self.controls.height() - 4)
+                           self.height() - self.controls.height() - 4)
         self.controls.raise_()
 
     # ------------------------------------------------------------------ styling
@@ -230,7 +233,7 @@ class SpectrumWaterfall(QtWidgets.QWidget):
         self.tag_ticks.setPen(pg.mkPen(dim, width=1, style=Qt.PenStyle.DashLine))
         axis_pen = pg.mkPen(style.TEXT_DIM)
         for plot in (self.spec_plot, self.wf_plot):
-            for name in ("left", "bottom"):
+            for name in ("left", "top"):
                 ax = plot.getAxis(name)
                 ax.setPen(axis_pen)
                 ax.setTextPen(axis_pen)

@@ -50,8 +50,10 @@ def assert_sane(s: RadioState) -> None:
     assert (s.wx_lat is None) == (s.wx_lon is None)
     assert s.wx_zip == "" or (s.wx_lat is not None and len(s.wx_zip) == 5 and s.wx_zip.isdigit())
     assert all(config.FREQ_MIN <= hz <= config.FREQ_MAX for hz in s.lockouts)
-    for target in (s.priority, s.timer_target):
+    for target in (s.priority, s.timer_target, s.vfo_b):
         assert target is None or config.FREQ_MIN <= target["vfo_hz"] <= config.FREQ_MAX
+    assert s.vfo_b["mode"] in config.MODES and config.STEPS_HZ[0] <= s.vfo_b["step_hz"] <= config.STEPS_HZ[-1]
+    assert type(s.vfo_b["vfo_hz"]) is int and type(s.sliders_visible) is bool
 
 
 # --------------------------------------------------------------------------- tuning

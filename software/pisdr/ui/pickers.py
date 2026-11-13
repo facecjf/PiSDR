@@ -1,4 +1,5 @@
-"""Secondary pages: band picker, mode picker, numeric keypad, location (ZIP code) and memories.
+"""Secondary pages: main menu, band picker, mode picker, numeric keypad, location (ZIP code)
+and memories.
 
 Every page implements the small :class:`Page` protocol so the main window can route the
 physical controls (four keys, encoder turn, encoder push) without knowing what is shown.
@@ -189,6 +190,43 @@ class ModePicker(_GridPicker):
     def activate(self, index: int) -> None:
         self.state.set_mode(config.MODES[index])
         self.state.message.emit(f"Mode {self.state.mode}")
+
+
+class MenuPage(_GridPicker):
+    """Main menu (the MENU button): every page and every Settings tab, one tap away."""
+
+    open_page = Signal(str)      # the target of the tile that was chosen
+
+    ENTRIES = (
+        ("BAND", "pick a band", "band"),
+        ("MODE", "AM  FM  SSB  CW", "mode"),
+        ("MEMORIES", "saved frequencies", "memories"),
+        ("FREQUENCY", "type it in", "keypad"),
+        ("RADIO", "filter, gain, decoders", "settings:RADIO"),
+        ("AUDIO", "noise, filters, timer", "settings:AUDIO"),
+        ("DISPLAY", "theme, spectrum", "settings:DISPLAY"),
+        ("SCAN", "timing, priority", "settings:SCAN"),
+        ("RECORDINGS", "play back", "recordings"),
+        ("SCAN LOG", "what the scan found", "scan_log"),
+        ("ADS-B MAP", "aircraft on 1090 MHz", "adsb"),
+        ("NETWORK", "rtl_tcp server", "network"),
+        ("LOCATION", "ZIP code", "location"),
+        ("HF CONDITIONS", "show / hide the panel", "hf_panel"),
+        ("SYSTEM", "presets, exit, shut down", "settings:SYSTEM"),
+    )
+
+    def __init__(self, state: RadioState, parent=None) -> None:
+        super().__init__(state, "MENU", parent)
+        self.set_items([f"{name}\n{hint}" for name, hint, _target in self.ENTRIES])
+
+    def on_shown(self) -> None:
+        self.selected = 0
+        self._highlight()
+
+    def _activate(self, index: int) -> None:
+        self.selected = index
+        self._highlight()
+        self.open_page.emit(self.ENTRIES[index][2])      # the main window opens it; no done()
 
 
 # --------------------------------------------------------------------------- keypad

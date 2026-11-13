@@ -71,6 +71,7 @@ HF conditions numbers and the aircraft in them are sample values.
 | ![Band picker](docs/images/ui_band_picker.png) | ![Settings, DISPLAY tab](docs/images/ui_settings.png) |
 | ![Memories page with the HF presets loaded](docs/images/ui_memories.png) | ![Inferno theme](docs/images/ui_theme_inferno.png) |
 | ![Green theme](docs/images/ui_theme_green.png) | ![ADS-B aircraft map](docs/images/ui_adsb_map.png) |
+| ![Menu page](docs/images/ui_menu.png) | |
 
 ## Controls at a glance
 
@@ -78,21 +79,40 @@ HF conditions numbers and the aircraft in them are sample values.
 +------------------------------------------------------------+---------+
 |                                                            |         |
 |   800 x 480 touchscreen                                    |  (( ))  |  <- EC11 knob
-|   spectrum + waterfall, tap a signal to tune it            |  TUNE   |
-|   big frequency readout, tap a digit to pick the step      |         |
-|                                                            |  RTL-SDR|
-|  [ BAND  ] [ MODE  ] [ FUNC  ] [ REC   ]  <- soft-key bar  |   V4    |
+|   VFO bar: status line, VFO A / B, meter, MENU and HIDE    |  TUNE   |
+|   spectrum + waterfall, tap a signal to tune it            |         |
+|   sliders: AF volume, RF gain, squelch                     |  RTL-SDR|
+|  [ BAND  ] [ MODE  ] [ KNOB  ] [FNC 1/3]  <- toolbar       |   V4    |
 +------------------------------------------------------------+         |
 |     [K1]       [K2]       [K3]       [K4]   <- 4 tactile keys        |
 +----------------------------------------------------------------------+
 ```
 
-- The four keys sit directly below the screen; the bar along the bottom of the screen
-  labels them, so their meaning can change with context.
-- Default page: `BAND / MODE / FUNC / MEM`. `FUNC` cycles what the knob controls
-  (TUNE -> VOLUME -> SQUELCH -> GAIN, returning to TUNE after a few seconds idle).
-- `MEM` opens saved frequencies (filter by group or "ON NOW" schedule); long-press `MEM`
-  starts a band (or memory) scan. While scanning the keys become `HOLD / SKIP / BAND|MEM / STOP`;
+- The main screen is laid out like [piHPSDR](https://github.com/dl1ycf/pihpsdr): a **VFO
+  bar** across the top (a status line with the mode, filter width and what is switched on,
+  the VFO A dial with VFO B beside it, and a line with band, step, zoom and levels), the
+  **meter** (S-units and dB, with the clock above it), **MENU** and **HIDE** buttons, the
+  panadapter and waterfall, a **sliders** area and the **toolbar**. Lit indicators are on,
+  grey ones are off; tap one to go to its setting.
+- The four keys sit directly below the screen; the toolbar along the bottom of the screen
+  labels them, so their meaning can change with context. The fourth key is `FNC`: it steps
+  through three rows of keys (hold it for the menu).
+
+  | Row | K1 | K2 | K3 | K4 |
+  |---|---|---|---|---|
+  | 1 | `BAND` (hold: next band) | `MODE` (hold: next mode) | `KNOB` what the knob controls (hold: Settings) | `FNC 1/3` |
+  | 2 | `MEM` memories (hold: start scan) | `SCAN` start (hold: band / memory) | `FILT` filter width (hold: back) | `FNC 2/3` |
+  | 3 | `NR` noise reduction (hold: noise blanker) | `A<>B` swap VFOs (hold: A to B) | `REC` record (hold: recordings) | `FNC 3/3` |
+
+- `KNOB` cycles what the knob controls (TUNE -> VOLUME -> SQUELCH -> GAIN, returning to TUNE
+  after a few seconds idle). The same three levels are the sliders under the waterfall: drag
+  one, or tap its name to give it the knob. `HIDE` removes the sliders to give the waterfall
+  more room; the knob then shows the level it is changing in a pop-up.
+- **VFO B** is a second frequency with its own mode and step: tap it (or `A<>B`) to swap it
+  with what is tuned, for flipping between two stations.
+- `MENU` opens a page of tiles for every page and every Settings tab.
+- `MEM` opens saved frequencies (filter by group or "ON NOW" schedule); `SCAN` starts a band
+  (or memory) scan. While scanning the keys become `HOLD / SKIP / BAND|MEM / STOP`;
   long-press `SKIP` locks the channel out. A priority channel can be checked while scanning,
   and every hold goes into a scan log.
 - In `CW` mode a Morse decoder strip shows decoded text and the sender's WPM. On FM
@@ -102,14 +122,15 @@ HF conditions numbers and the aircraft in them are sample values.
   FM names learned from RDS, a built-in list), zooms to ×64 and has `◀ − + ▶` buttons to
   zoom and seek signal to signal. A tap near a signal snaps to it.
 - Below 30 MHz an **HF conditions** panel (SFI/SSN/A/K, band conditions, 24 h Kp, local
-  weather) sits beside the spectrum; the `☀ SFI K` chip in the top bar toggles it.
+  weather) sits beside the spectrum; the `☀ SFI K` chip above the meter toggles it.
 - Picking the **ADS-B 1090** band opens an **aircraft map**: a radar-style plot with range
   rings, coastlines, callsigns, flight levels and trails, and a list of the nearest
   aircraft. The keys become `ZOOM − / ZOOM + / LABELS / BACK`, the knob selects an aircraft.
   The dongle is lent to `dump1090` while the map is open (see `docs/02_software_setup.md`
   section 5f).
-- Encoder push cycles the tuning step (10 Hz ... 1 MHz). Long-press `FUNC` opens Settings,
-  in five tabs: RADIO (filter widths, PPM, S-meter cal, CW pitch, decoders), AUDIO (DSP,
+- Encoder push cycles the tuning step (10 Hz ... 1 MHz), and so does a tap on a digit of the
+  dial; holding the knob or the dial opens the keypad. Long-press `KNOB` (or `MENU`) opens
+  Settings, in five tabs: RADIO (filter widths, PPM, S-meter cal, CW pitch, decoders), AUDIO (DSP,
   recordings browser, record timer), DISPLAY (themes, brightness/dimming, UTC clock, knob
   acceleration, spectrum zoom/averaging/peak hold/style/colours/labels), SCAN (timing, priority, lockouts, log)
   and SYSTEM (presets, rtl_tcp network mode, ADS-B map, your location by ZIP code, shutdown).
@@ -144,7 +165,7 @@ cd software
 python -m pytest
 ```
 
-About 420 tests in about a minute, with no radio, display or network. They cover the
+About 460 tests in about a minute, with no radio, display or network. They cover the
 settings and memory files (including damaged ones), tuning, scanning, the record timer,
 signal detection, the Morse decoder, the ADS-B map, the ZIP code table, and every page of the UI including a few
 thousand random key presses, knob turns and taps. The real flowgraph code in

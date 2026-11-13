@@ -93,7 +93,14 @@ QFrame#topbar QLabel {{
     background: transparent;
     font-size: 14px;
 }}
-QFrame#topbar QLabel#chip {{
+QFrame#meter {{
+    background: {PANEL};
+}}
+QFrame#meter QLabel {{
+    background: transparent;
+    font-size: 14px;
+}}
+QFrame#topbar QLabel#chip, QFrame#meter QLabel#chip {{
     border: 1px solid {BORDER};
     border-radius: 4px;
     padding: 0 7px;
@@ -101,7 +108,7 @@ QFrame#topbar QLabel#chip {{
     font-weight: bold;
     color: {TEXT_DIM};
 }}
-QFrame#topbar QLabel#chip[active="true"] {{
+QFrame#topbar QLabel#chip[active="true"], QFrame#meter QLabel#chip[active="true"] {{
     background: {ACCENT};
     border-color: {ACCENT};
     color: {SELECT_FG};
@@ -136,6 +143,30 @@ QPushButton#softkey {{
     max-height: 46px;
 }}
 QPushButton#softkey:pressed {{
+    background: {ACCENT};
+    color: {SELECT_FG};
+}}
+QPushButton#menubtn, QPushButton#hidebtn {{
+    font-size: 15px;
+    font-weight: bold;
+    border-radius: 4px;
+    padding: 0;
+    min-height: 0;
+}}
+QPushButton#menubtn {{
+    background: {ACCENT};
+    border-color: {ACCENT};
+    color: {SELECT_FG};
+}}
+QPushButton#menubtn:pressed {{
+    background: {ACCENT_2};
+    border-color: {ACCENT_2};
+}}
+QPushButton#hidebtn {{
+    background: {PANEL};
+    color: {TEXT_DIM};
+}}
+QPushButton#hidebtn:pressed {{
     background: {ACCENT};
     color: {SELECT_FG};
 }}
@@ -266,6 +297,7 @@ QPushButton#specbtn {{
     font-size: 14px;
     font-weight: bold;
     padding: 0px;
+    min-height: 0;
 }}
 QPushButton#specbtn:pressed {{ background: {ACCENT_2}; color: {SELECT_FG}; }}
 QLabel#speczoom {{

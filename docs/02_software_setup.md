@@ -147,9 +147,48 @@ Without that bridge the app tries `default`, then `pipewire`, then `pulse`, then
 Force one with `PISDR_AUDIO_DEVICE=plughw:CARD=Device,DEV=0` (the card id is the short name
 in `aplay -l`). Sample rate is 48 kHz.
 
+## 4a. The main screen
+
+![Main screen](images/ui_main_sim.png)
+
+The layout follows [piHPSDR](https://github.com/dl1ycf/pihpsdr). From the top:
+
+- **VFO bar.** The first line is the receiver chain: mode and filter width, then `AGC`, `NR`,
+  `NB`, `NCH` (notch), `HPF`, `LPF`, `SQL`, `RDS`, `DEC` (data decoder), `BIAS`, and `REC` at
+  the right. A lit name is switched on (with its level, e.g. `NR5`), a grey one is off. Tap
+  one to open Settings on that row; tap the mode for the mode page, `SQL` to put squelch on
+  the knob. The last line shows the band, tuning step, zoom, what the knob controls and the
+  AF and RF levels; tap the band for the band page, the others to step them. Scan, playback,
+  timer and network status appear at the right of that line.
+- **VFO A** is the tuned frequency. Tap a digit to make it the tuning step; hold the dial to
+  type a frequency. **VFO B** beside it holds a second frequency, mode and step: tap it to
+  swap the two (`A<>B`); hold the `A<>B` key to copy A to B.
+- **Meter**: signal strength in S-units (S9 = -73 dB, above that as S9+dB) and dB, a peak
+  tick on the bar, the clock and the HF conditions chip.
+- **MENU** opens a page of tiles: every page and every Settings tab. **HIDE** / **SHOW**
+  removes or restores the sliders.
+- **Panadapter and waterfall**, with the frequency scale along the top. Tap to tune; the
+  `◀ − + ▶` buttons zoom and seek.
+- **Sliders**: `AF` volume, `RF` gain (reads `AGC` while the tuner AGC is on; moving it
+  switches the AGC off) and `SQL` squelch. Drag a slider, or tap its name to give it
+  the knob (tap again to return the knob to tuning). With the sliders hidden, a pop-up shows
+  the level while the knob changes it.
+- **Toolbar**: the labels of the four keys. `FNC` steps through three rows; holding it opens
+  the menu.
+
+| Row | K1 | K2 | K3 | K4 |
+|---|---|---|---|---|
+| 1 | `BAND` page; hold: next band | `MODE` page; hold: next mode | `KNOB` cycles TUNE / AF / SQL / RF; hold: Settings | `FNC 1/3` |
+| 2 | `MEM` memories; hold: start scan | `SCAN:BAND` / `SCAN:MEM` start scan; hold: change source | `FILT` next filter width; hold: previous | `FNC 2/3` |
+| 3 | `NR` noise reduction on (5) / off; hold: noise blanker | `A<>B` swap; hold: copy A to B | `REC` record; hold: recordings | `FNC 3/3` |
+
+The other pages keep a one-line status bar at the top instead of the VFO bar.
+
 ## 5. Settings page
 
-Long-press **FUNC** (K3) opens Settings. Five tabs run across the top: **RADIO, AUDIO,
+Long-press **KNOB** (K3 on the first row of keys) opens Settings, and so do the tiles of the
+**MENU** page, one for each tab. Tapping an indicator in the status line of the main screen
+(AGC, NR, NB, NCH ...) opens Settings with that row selected. Five tabs run across the top: **RADIO, AUDIO,
 DISPLAY, SCAN, SYSTEM**. Tap a tab or a row to select it, tap the row again or press
 **CHANGE** to toggle/activate it, and turn the knob to step its value. **UP/DOWN** move the
 selection and walk across tabs; long-press **UP/DOWN** jumps a whole tab. Rows ending in
@@ -177,7 +216,7 @@ Destructive rows (clear lockouts, shut down) ask for a second press within 3 s.
   strong local station with S9+ on a reference receiver.
 - **CW pitch** (400–1000 Hz) sets both the CW tone you hear and where the Morse decoder listens.
 
-**Display rows.** **Clock UTC** shows `HH:MMZ` in the top bar — schedules, the record timer
+**Display rows.** **Clock UTC** shows `HH:MMZ` above the meter — schedules, the record timer
 and the scan log all use UTC. **Brightness** and **Dim after** only work on a DSI panel
 with a backlight device (the Hosyond and official displays); on HDMI the row reads
 "no panel". Any touch, key or knob movement restores full brightness. **Knob acceleration**
@@ -269,7 +308,7 @@ that a lone `E` or `T` sent as a whole word is dropped too.
 Settings → RADIO → **Data decoder** cycles `OFF / APRS / POCSAG / FLEX / EAS / DTMF`. The
 demodulated audio is resampled to 22.05 kHz and piped to `multimon-ng`; decoded lines
 appear in a strip under the frequency readout (newest two lines, count at right, **CLEAR**
-empties it, the last 40 are kept). The top bar shows the active decoder.
+empties it, the last 40 are kept). The status line shows the active decoder in place of `DEC`.
 
 | Decoder | Tune | Mode |
 |---|---|---|
@@ -296,16 +335,17 @@ SAVE on the MEMORIES page). Controls:
 
 | Action | Control |
 |---|---|
-| Open memories | short press K4 (`MEM`) |
+| Open memories | `FNC` to the second row of keys, then K1 (`MEM`); or `MENU` → MEMORIES |
 | Save / delete / recall | soft keys on the MEMORIES page |
 | Filter by group | the group button top-right of MEMORIES (also used by memory scan) |
 | Show only stations scheduled now | `ON NOW` button on MEMORIES |
 | Set / clear priority channel | long press `TUNE` on MEMORIES (badge **P**) |
 | Lock out / unlock a memory | long press `DELETE` on MEMORIES (badge **⊘**) |
-| Start / stop scan | long press K4 |
+| Start a scan | K2 (`SCAN:BAND` / `SCAN:MEM`) on the second row, or long press `MEM` |
+| Choose band or memory scan | long press `SCAN` |
 | While scanning | `HOLD`, `SKIP`, `BAND`/`MEM` (scan source), `STOP` |
 | Lock out the channel being scanned | long press `SKIP` |
-| Settings | long press K3 (`FUNC`) |
+| Settings | long press K3 (`KNOB`) on the first row, or `MENU` |
 
 **Groups and schedules.** A memory can carry a `group` and a UTC schedule. Saving a memory
 while a group is selected puts it in that group. Edit `memories.json` (or the presets file)
@@ -331,8 +371,8 @@ Turning the knob or tapping the spectrum cancels the scan.
 
 **Priority.** Pick a priority memory (Settings → SCAN → Priority channel, or long-press TUNE
 on MEMORIES). While scanning, every 2–10 s the scanner hops to it for about a third of a
-second; if it is active the scanner holds there, otherwise it goes straight back. `+P` in the
-top bar shows priority is armed.
+second; if it is active the scanner holds there, otherwise it goes straight back. `+P` after
+`SCAN:BAND` in the VFO bar shows priority is armed.
 
 **Lockouts** skip a frequency in both band and memory scan. Long-press SKIP while scanning, or
 lock memories from the MEMORIES page; Settings → SCAN → Lockouts → CLEAR (press twice) removes them.
@@ -355,7 +395,7 @@ antenna (long wire or loop) — the whip will hear almost nothing — and keep R
 Bands in `bands.json` may overlap: **HF utility** covers 40 m, 20 m and the WWV slots. The
 radio stays in the band you picked for as long as the frequency is inside it; when you tune
 or key in a frequency outside it, the narrowest band that contains the new frequency is used.
-Band scan covers the band named in the top bar.
+Band scan covers the band named at the bottom left of the VFO bar.
 
 ## 5c. HF conditions panel (solar / weather)
 
@@ -366,8 +406,8 @@ table (80–40 m … 12–10 m, day and night), a 24-hour **Kp** bar strip, and 
 (storms are flagged red — lightning QRN). The age of the data sits top-right; it turns
 amber with "offline" when the feeds can't be reached.
 
-The **☀ SFI 92 K3** chip in the top bar always shows the latest SFI and K. Tap it to hide
-the panel, or to pin it on while you're on VHF/UHF. Settings → DISPLAY → **HF conditions
+The **☀ SFI 92 K3** chip above the meter always shows the latest SFI and K. Tap it to hide
+the panel, or to pin it on while you're on VHF/UHF (**MENU** → HF CONDITIONS does the same). Settings → DISPLAY → **HF conditions
 panel** chooses `AUTO` (default: shown below 30 MHz), `ON` or `OFF`.
 
 Data comes from `hamqsl.com` (hourly), NOAA SWPC (every 10 min) and Open-Meteo (every
@@ -407,7 +447,7 @@ one at 100 MB, with a message, so a forgotten recording cannot fill the card. Th
 the Recordings page shows how much recording time is left.
 
 **Recordings ▸** lists them newest first. `PLAY` plays the selected file through the radio's
-audio output (the radio is muted meanwhile, `▶ PLAY` shows in the top bar), `STOP` ends it,
+audio output (the radio is muted meanwhile, `▶ PLAY` shows in the status line), `STOP` ends it,
 `DELETE` (press twice) removes the file. Leaving the page stops playback.
 
 **Record timer**: set **Timer start** (UTC; the knob steps 5 min, CHANGE jumps to the next
@@ -415,7 +455,7 @@ audio output (the radio is muted meanwhile, `▶ PLAY` shows in the top bar), `S
 and **Timer repeat** (`ONCE` / `DAILY`), tune the station, then set **Timer** to arm it —
 arming captures the current frequency and mode. At the start time PiSDR stops any scan or
 playback, tunes the station, records for the set length and then tunes back to where you
-were. `TMR HH:MMZ` in the top bar shows it is armed. Stopping the recording by hand ends that
+were. `TMR HH:MMZ` in the VFO bar shows it is armed. Stopping the recording by hand ends that
 run. A one-shot timer disarms itself afterwards. The Pi's clock must be correct (network time
 or an RTC).
 

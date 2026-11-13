@@ -415,6 +415,20 @@ class SettingsPage(Page):
         self.selected = self.first_row[tab % len(self.TABS)]
         self.refresh()
 
+    def select_tab(self, name: str) -> None:
+        """Show the tab called *name* (RADIO, AUDIO ...) with its first row selected."""
+        if name in self.TABS:
+            self._select_tab(self.TABS.index(name))
+
+    def select_row(self, label: str) -> bool:
+        """Select the row called *label* and show its tab; False if there is no such row."""
+        for index, row in enumerate(self.rows):
+            if row.label == label:
+                self.selected = index
+                self.refresh()
+                return True
+        return False
+
     def _tap(self, index: int) -> None:
         if self.selected == index or self.rows[index].action:
             self.selected = index

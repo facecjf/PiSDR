@@ -16,7 +16,8 @@ is printed before the enclosure.
    `python3 -m pisdr.controls.gpio` and confirm every event prints. Then run the app:
    - knob tunes; if it tunes backwards swap `ENCODER_A_GPIO` / `ENCODER_B_GPIO` in `config.py`,
    - knob push cycles the step, knob hold opens the keypad,
-   - K1 BAND, K2 MODE, K3 FUNC, K4 REC, K4 held opens settings.
+   - K1 BAND, K2 MODE, K3 KNOB (held: Settings), K4 FNC steps through the three rows of
+     keys (held: the menu).
 6. Leave it running for 30 minutes. `vcgencmd measure_temp` should stay below 70 C in the
    open; if not, fix cooling (heat sink on the SoC) before the enclosure makes it worse.
 

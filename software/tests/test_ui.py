@@ -41,7 +41,7 @@ def test_window_is_the_size_of_the_panel(window):
     assert colours > 50 and brightness > 5
 
 
-@pytest.mark.parametrize("page", [*range(8), 10])       # 8 and 9 hold the dongle: tested on their own
+@pytest.mark.parametrize("page", [*range(8), 10, 11])   # 8 and 9 hold the dongle: tested on their own
 def test_every_page_opens_draws_and_returns(window, qapp, page):
     window.show_page(page)
     pump(qapp, 0.05)
@@ -240,18 +240,23 @@ def test_keyboard_stands_in_for_the_knob_and_keys(window):
 def test_scanning_from_the_front_panel(window, qapp):
     state = window.state
     state.select_band(next(i for i, b in enumerate(state.bands) if b.mode == "NFM"))
-    window.key_long_pressed(3)                         # hold MEM: scan
+    window.key_pressed(3)                              # FNC: second toolbar layer
+    window.key_long_pressed(0)                         # hold MEM: scan
     assert state.scanning
     assert [b.text() for b in window.softkeys.buttons] == ["HOLD", "SKIP", "MEM", "STOP"]
-    assert "SCAN:BAND" in window.topbar_left.text()
+    assert "SCAN:BAND" in window.main_page.vfo_bar.text()
     window.key_pressed(0)
     assert state.scan_held and window.softkeys.buttons[0].text() == "RESUME"
     window.key_pressed(0)
     assert not state.scan_held
     window.knob_turned(1)                              # touching the knob takes over
     assert not state.scanning
-    assert [b.text() for b in window.softkeys.buttons][0] == "BAND"
-    window.key_long_pressed(3)
+    assert [b.text() for b in window.softkeys.buttons][:2] == ["MEM", "SCAN:BAND"]
+    window.key_pressed(1)                              # SCAN
+    assert state.scanning
+    window.key_long_pressed(3)                         # hold STOP stops it as well
+    assert not state.scanning
+    window.key_pressed(1)
     window.show_page(window.PAGE_SETTINGS)             # leaving the main page stops it too
     assert not state.scanning
 
@@ -326,7 +331,8 @@ def test_zoom_and_seek_buttons(window, qapp):
 def test_memories_page_saves_and_recalls(window, qapp):
     state = window.state
     state.tune_to(162_550_000, "NFM", 25_000)
-    window.key_pressed(3)
+    window.key_pressed(3)                              # FNC, then MEM
+    window.key_pressed(0)
     assert window.stack.currentIndex() == window.PAGE_MEMORIES
     labels = window.memories_page.softkey_labels()
     save = next(i for i, text in enumerate(labels) if "SAVE" in text.upper())
@@ -488,7 +494,7 @@ def test_random_session(window, qapp, seed, monkeypatch):
                            rng.choice([Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.ShiftModifier]))),
         (6, tap_spectrum),
         (12, tap_anywhere),
-        (4, lambda: window.show_page(rng.choice([*range(8), window.PAGE_LOCATION]))),
+        (4, lambda: window.show_page(rng.choice([*range(8), window.PAGE_LOCATION, window.PAGE_MENU]))),
         (1, window._enter_adsb),
         (3, lambda: spectrum.seek(rng.choice([-1, 1]))),
         (2, lambda: state.set_signal_db(rng.uniform(-120, -20))),
@@ -534,6 +540,6 @@ def test_screenshot_tool_writes_every_image(tmp_path):
     assert result.returncode == 0, result.stderr[-2000:]
     names = sorted(path.name for path in (tmp_path / "shots").iterdir())
     assert names == ["ui_adsb_map.png", "ui_band_picker.png", "ui_hf_conditions.png", "ui_main_sim.png",
-                     "ui_memories.png", "ui_settings.png", "ui_theme_green.png", "ui_theme_inferno.png",
-                     "ui_zoom.png"]
+                     "ui_memories.png", "ui_menu.png", "ui_settings.png", "ui_theme_green.png",
+                     "ui_theme_inferno.png", "ui_zoom.png"]
     assert all((tmp_path / "shots" / name).stat().st_size > 5000 for name in names)

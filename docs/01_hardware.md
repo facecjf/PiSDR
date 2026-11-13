@@ -83,8 +83,8 @@ the switch closes between the two sides. Check with a meter before soldering.
 |---|---|---|---|---|
 | K1 | under soft-key 1 (BAND) | GPIO23 | 16 | GND, pin 20 |
 | K2 | under soft-key 2 (MODE) | GPIO24 | 18 | GND, pin 20 |
-| K3 | under soft-key 3 (FUNC) | GPIO25 | 22 | GND, pin 25 |
-| K4 | under soft-key 4 (MEM / hold for SCAN) | GPIO5 | 29 | GND, pin 25 |
+| K3 | under soft-key 3 (KNOB) | GPIO25 | 22 | GND, pin 25 |
+| K4 | under soft-key 4 (FNC: next row of keys / hold for the menu) | GPIO5 | 29 | GND, pin 25 |
 
 The key labels are drawn by software and change with context; the hardware positions
 never change. Key centres sit at 1/8, 3/8, 5/8 and 7/8 of the active-area width so they
