@@ -11,6 +11,7 @@ INFERNO_STOPS = [(0.0, (0, 0, 4)), (0.15, (31, 12, 72)), (0.3, (85, 15, 109)),
                  (0.45, (136, 34, 106)), (0.6, (186, 54, 85)), (0.72, (227, 89, 51)),
                  (0.85, (249, 140, 10)), (0.95, (249, 201, 50)), (1.0, (252, 255, 164))]
 
+# ALTITUDE is the colour of an aircraft on the ADS-B map: low, middle, high (config.ADSB_ALT_BANDS_FT).
 THEMES: dict[str, dict[str, object]] = {
     "Amber": {
         "BG": "#0e1216", "PANEL": "#171d23", "PANEL_HI": "#222b34", "BORDER": "#2f3a45",
@@ -18,6 +19,7 @@ THEMES: dict[str, dict[str, object]] = {
         "TEXT": "#e8ecef", "TEXT_DIM": "#8a949c",
         "ACCENT": "#ffb000", "ACCENT_2": "#39c0ff", "REC": "#ff4040", "OK": "#5fd36a",
         "SELECT_FG": "#000000",
+        "ALTITUDE": ("#5fd36a", "#ffb000", "#39c0ff"),
         "WATERFALL": [(0.0, (0, 0, 20)), (0.15, (0, 0, 110)), (0.35, (0, 120, 200)),
                       (0.55, (40, 200, 120)), (0.75, (255, 210, 0)), (1.0, (255, 255, 255))],
     },
@@ -27,6 +29,7 @@ THEMES: dict[str, dict[str, object]] = {
         "TEXT": "#ff5a5a", "TEXT_DIM": "#8a3a3a",
         "ACCENT": "#ff3b3b", "ACCENT_2": "#ff8c42", "REC": "#ff2020", "OK": "#ff7a3a",
         "SELECT_FG": "#000000",
+        "ALTITUDE": ("#c43c3c", "#ff8c42", "#ffd9a8"),
         "WATERFALL": [(0.0, (0, 0, 0)), (0.3, (60, 0, 0)), (0.55, (160, 10, 0)),
                       (0.75, (255, 80, 0)), (0.9, (255, 170, 60)), (1.0, (255, 230, 180))],
     },
@@ -36,6 +39,7 @@ THEMES: dict[str, dict[str, object]] = {
         "TEXT": "#e6f0ff", "TEXT_DIM": "#7f93b8",
         "ACCENT": "#7fd0ff", "ACCENT_2": "#c9b3ff", "REC": "#ff5c7a", "OK": "#6ee7b7",
         "SELECT_FG": "#061020",
+        "ALTITUDE": ("#6ee7b7", "#7fd0ff", "#c9b3ff"),
         "WATERFALL": [(0.0, (5, 8, 24)), (0.25, (20, 40, 110)), (0.5, (30, 120, 200)),
                       (0.75, (120, 210, 255)), (1.0, (255, 255, 255))],
     },
@@ -45,6 +49,7 @@ THEMES: dict[str, dict[str, object]] = {
         "TEXT": "#141a20", "TEXT_DIM": "#5c6a78",
         "ACCENT": "#d97706", "ACCENT_2": "#0369a1", "REC": "#dc2626", "OK": "#15803d",
         "SELECT_FG": "#ffffff",
+        "ALTITUDE": ("#15803d", "#d97706", "#0369a1"),
         "WATERFALL": [(0.0, (250, 250, 252)), (0.25, (190, 210, 240)), (0.5, (90, 150, 220)),
                       (0.75, (230, 120, 30)), (1.0, (120, 0, 0))],
     },
@@ -54,6 +59,7 @@ THEMES: dict[str, dict[str, object]] = {
         "TEXT": "#fcefd8", "TEXT_DIM": "#a8879a",
         "ACCENT": "#f98c0a", "ACCENT_2": "#d6559c", "REC": "#ff3030", "OK": "#fcd34d",
         "SELECT_FG": "#000000",
+        "ALTITUDE": ("#fcd34d", "#f98c0a", "#d6559c"),
         "WATERFALL": INFERNO_STOPS,
     },
     "Green": {
@@ -63,6 +69,7 @@ THEMES: dict[str, dict[str, object]] = {
         "TEXT": "#4ee877", "TEXT_DIM": "#2a8a45",
         "ACCENT": "#8bffaa", "ACCENT_2": "#3ccf66", "REC": "#e6ffe9", "OK": "#1fb851",
         "SELECT_FG": "#000000",
+        "ALTITUDE": ("#35c466", "#8bffaa", "#e6ffe9"),
         "WATERFALL": [(0.0, (0, 6, 2)), (0.25, (0, 50, 18)), (0.5, (10, 130, 45)),
                       (0.75, (60, 230, 100)), (0.92, (170, 255, 190)), (1.0, (235, 255, 240))],
     },
@@ -74,6 +81,7 @@ DEFAULT_THEME = "Amber"
 BG = PANEL = PANEL_HI = BORDER = METER_BG = TEXT = TEXT_DIM = ""
 ACCENT = ACCENT_2 = REC = OK = SELECT_FG = ""
 WATERFALL: list = []
+ALTITUDE: tuple[str, str, str] = ("", "", "")
 CURRENT_THEME = DEFAULT_THEME
 STYLESHEET = ""
 
@@ -307,6 +315,20 @@ QLabel#speczoom {{
     font-size: 12px;
     font-weight: bold;
 }}
+QPushButton#radarbtn {{
+    background: {PANEL_HI};
+    color: {TEXT};
+    border: 2px solid {ACCENT};
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: bold;
+    padding: 0px;
+    min-height: 0;
+}}
+QPushButton#radarbtn:pressed {{ background: {ACCENT}; color: {SELECT_FG}; }}
+QPushButton#radarbtn[off="true"] {{ color: {TEXT_DIM}; border-color: {BORDER}; }}
+QPushButton#radarbtn[lit="true"] {{ background: {ACCENT}; color: {SELECT_FG}; }}
+QPushButton#radarbtn[big="true"] {{ font-size: 17px; }}
 """
 
 # Waterfall / spectrum-fill palettes selectable in Settings (THEME uses WATERFALL above).
@@ -326,7 +348,7 @@ def palette_stops(name: str) -> list:
 def apply_theme(name: str) -> str:
     """Set the module colour globals for *name* and rebuild the stylesheet."""
     global BG, PANEL, PANEL_HI, BORDER, METER_BG, TEXT, TEXT_DIM
-    global ACCENT, ACCENT_2, REC, OK, SELECT_FG, WATERFALL, CURRENT_THEME, STYLESHEET
+    global ACCENT, ACCENT_2, REC, OK, SELECT_FG, WATERFALL, ALTITUDE, CURRENT_THEME, STYLESHEET
     theme = THEMES.get(name) or THEMES[DEFAULT_THEME]
     CURRENT_THEME = name if name in THEMES else DEFAULT_THEME
     BG = theme["BG"]; PANEL = theme["PANEL"]; PANEL_HI = theme["PANEL_HI"]           # noqa: E702
@@ -335,6 +357,7 @@ def apply_theme(name: str) -> str:
     ACCENT = theme["ACCENT"]; ACCENT_2 = theme["ACCENT_2"]                           # noqa: E702
     REC = theme["REC"]; OK = theme["OK"]; SELECT_FG = theme["SELECT_FG"]             # noqa: E702
     WATERFALL = list(theme["WATERFALL"])
+    ALTITUDE = tuple(theme["ALTITUDE"])
     STYLESHEET = _build_stylesheet()
     return STYLESHEET
 

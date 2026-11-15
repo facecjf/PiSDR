@@ -328,6 +328,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if index in (self.PAGE_MAIN, self.PAGE_MENU):
             self._from_menu = None
         self.topbar.setVisible(index != self.PAGE_MAIN)
+        self.softkeys.setVisible(index != self.PAGE_ADSB)    # the map has its own buttons; the keys still work
         self.popup.hide()
         self.stack.setCurrentIndex(index)
         # Waterfall paints compete with ALSA on the Pi; pause FFT while off the main page.

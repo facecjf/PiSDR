@@ -470,8 +470,8 @@ to `rtl_tcp`. rtl_tcp has no password: only use it on a network you trust.
 
 ## 5f. ADS-B aircraft map
 
-**BAND → ADS-B 1090** (or Settings → SYSTEM → **ADS-B aircraft map ▸**) opens a radar-style
-plot of the aircraft in range. An RTL-SDR cannot be a voice receiver and a 1090 MHz Mode S
+**BAND → ADS-B 1090** (or Settings → SYSTEM → **ADS-B aircraft map ▸**) opens a radar
+display of the aircraft in range. An RTL-SDR cannot be a voice receiver and a 1090 MHz Mode S
 decoder at once, so the dongle is lent to `dump1090` while the map is open, the same way
 network mode lends it to `rtl_tcp`: PiSDR's receiver, scanner, recorder and decoders are
 paused, and **BACK** stops the decoder and brings the radio back (on 1090 MHz if you came
@@ -479,33 +479,88 @@ from the band picker, where you were if you came from Settings).
 
 ![ADS-B aircraft map](images/ui_adsb_map.png)
 
-- North is up and the receiver is the small circle in the middle. Rings are distances in
-  nautical miles; the range in the top-left corner is the one that reaches the top and
-  bottom edges.
-- Each arrow is an aircraft pointing the way it is flying, with its trail (about the last
-  three minutes). Beside it: the callsign (or the 6-digit ICAO address until the callsign
-  has been heard) and the altitude in hundreds of feet with `↑` / `↓` when climbing or
-  descending, so `350` is 35,000 ft and `024↑` is 2,400 ft and climbing. A grey square is
-  an aircraft on the ground; a grey arrow has not sent a position for 15 seconds. Aircraft
-  drop off the map after a minute of silence.
-- The panel on the right lists the aircraft nearest first; those heard but not yet located
-  are at the end. Selecting one shows altitude and climb rate, ground speed, track, distance
-  and bearing from you, squawk and signal level.
+The page is laid out like a desk-top flight radar (after the
+[FR-360](https://sites.google.com/view/fr-360/home-page) project; the data is only what
+your own antenna hears) and drawn in the colours of the theme chosen in Settings → DISPLAY:
+the rings, headings and buttons in the theme's accent colour on its background. The
+soft-key bar at the bottom is hidden on this page to give the map the whole height; the
+buttons on the map take its place, and the four keys under the screen still work (table
+below).
 
-| Control | Action |
-|---|---|
-| `ZOOM −` / `ZOOM +` | Range 10 / 25 / 50 / 100 / 150 / 250 nm |
-| `LABELS` | `FULL` callsign and altitude, `NAME` callsign only, `OFF` only the selected aircraft |
-| Knob | Select the next / previous aircraft by distance; push to clear the selection |
-| Tap | An aircraft or a list row selects it; empty sky clears the selection |
-| `BACK` | Stop the decoder and return to the radio |
+**The radar** (left)
+
+- The map fills the left of the screen. North is up and the receiver is the dot in the
+  middle. Rings are distances in nautical miles, numbered along the west–east line; the
+  heavier ring is the range shown in the top-left corner, which reaches the top and bottom
+  edges, and the rings carry on to the corners. `T.13` under the range is the number of
+  aircraft heard, including those off the map (they are all in the list).
+- Each aircraft is a small silhouette pointing the way it is flying, with its trail (about
+  the last three minutes). The shape comes from the category the aircraft sends: airliner,
+  wide-body (larger), business jet / turboprop, light aircraft, helicopter. Until the
+  category has been heard, slow and low traffic is drawn as a light aircraft.
+- The colour is the altitude, in three steps: below 10,000 ft (`LOW`), from 10,000 ft
+  (`FL100+`) and from 25,000 ft (`FL250+`). The legend on the right shows the three
+  colours, which differ from theme to theme: green, amber and blue in Amber; three
+  brightnesses of the one colour in Night and Green. An emergency squawk (7500, 7600, 7700)
+  is drawn in the theme's alarm colour (red in most). A dim square is an aircraft on the
+  ground; a dim aircraft has not sent a position for 15 seconds. Aircraft drop off after a
+  minute of silence.
+- Beside each one: the callsign (or the 6-digit ICAO address until the callsign has been
+  heard) and the altitude in hundreds of feet with `↑` / `↓` when climbing or descending,
+  so `350` is 35,000 ft and `024↑` is 2,400 ft and climbing.
+- The aircraft whose details are on the right sits on a lit disc inside a dashed circle.
+- The sweep line is decoration: it turns once every five seconds and is not tied to the
+  decoder, which reports once a second.
+
+**Flight data** (right) shows one aircraft: callsign, ICAO address and category, the
+operator worked out from the callsign, altitude and climb rate, ground speed and track,
+distance and compass direction from you, squawk and signal level. In **AUTO** the panel
+moves on to the next aircraft every 6 seconds, nearest first. Turning the knob or tapping
+an aircraft holds on that one (**PAUSED**); pushing the knob or tapping empty sky returns
+to AUTO.
+
+**The list** (`LIST`) is every aircraft heard, ten to a page: callsign, operator, distance,
+altitude and speed. Sort it by distance, altitude or operator. The knob moves the selection
+(the list turns the page with it), a push or a tap on a line shows that aircraft on the radar.
+
+![ADS-B flight list](images/ui_adsb_list.png)
+
+| Control | On the radar | In the list |
+|---|---|---|
+| On the screen | `+` `−` zoom, `LABELS`, `TRAILS`, `GROUND`, `LIST ▶`, `BACK` (bottom-left of the map) | `◀ RADAR`, `DIST` `ALT` `AIRLINE` to sort, `◀ ▶` to turn the page |
+| Key 1 | `ZOOM −`: range 10 / 25 / 50 / 100 / 150 / 250 nm | `SORT`: distance → altitude → operator |
+| Key 2 | `ZOOM +` | `PAGE`: next page |
+| Key 3 | `LIST` | `RADAR` |
+| Key 4 | `BACK`: stop the decoder and return to the radio | the same |
+| Hold key 1 | Ground traffic shown / hidden | |
+| Hold key 2 | Trails on / off | |
+| Hold key 3 | Labels: `FULL` callsign and altitude, `NAME` callsign only, `OFF` only the aircraft being shown | |
+| Knob | Next / previous aircraft by distance (the first click holds the one AUTO is showing) | Next / previous line |
+| Push knob | Back to AUTO | Show the selected aircraft on the radar |
+| Tap | An aircraft holds on it; empty sky returns to AUTO | A line shows that aircraft on the radar |
+
+The keys are not labelled on this page; they do the same as the buttons on the screen.
+The range, labels, trails and ground settings are remembered.
+
+**Operators.** ADS-B does not carry the airline's name. The three letters at the start of
+an airline callsign (`UAL1482`) are looked up in `software/config/airlines.json`, about 185
+of the designators heard most; a US registration used as the callsign (`N512PS`) is shown
+as `Private (US reg.)`, an airline that is not in the table as `Unknown`. To add or rename
+one, create `~/.config/pisdr/airlines.json`; it is read on top of the built-in table:
+
+```json
+{"operators": {"ZZZ": "My Flying Club", "UAL": "United"}}
+```
+
+The aircraft type, registration and route are not in the ADS-B signal either, and are not
+shown.
 
 **Your location.** The map is centred on the same location as the weather: the ZIP code
 entered in Settings → SYSTEM → **Location ▸**, or `"wx_lat"` and `"wx_lon"` in
 `~/.config/pisdr/settings.json` (section 5c). Set one for correct rings, distances and
 bearings; a ZIP code usually puts the centre within a few miles of you, the coordinates exactly.
 Without either the location guessed from your IP address is used and
-a note at the bottom of the map says so: that can be tens of kilometres out, which moves
+a yellow note in the bottom-left corner says so: that can be tens of kilometres out, which moves
 the centre marker and every distance by as much (the aircraft and the coastlines are still
 drawn in the right place relative to each other). With no location at all the map centres
 on the traffic and shows positions without distances.

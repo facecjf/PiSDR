@@ -539,7 +539,7 @@ def test_screenshot_tool_writes_every_image(tmp_path):
                             capture_output=True, text=True, timeout=120, env=env)
     assert result.returncode == 0, result.stderr[-2000:]
     names = sorted(path.name for path in (tmp_path / "shots").iterdir())
-    assert names == ["ui_adsb_map.png", "ui_band_picker.png", "ui_hf_conditions.png", "ui_main_sim.png",
-                     "ui_memories.png", "ui_menu.png", "ui_settings.png", "ui_theme_green.png",
-                     "ui_theme_inferno.png", "ui_zoom.png"]
+    assert names == ["ui_adsb_list.png", "ui_adsb_map.png", "ui_band_picker.png", "ui_hf_conditions.png",
+                     "ui_main_sim.png", "ui_memories.png", "ui_menu.png", "ui_settings.png",
+                     "ui_theme_green.png", "ui_theme_inferno.png", "ui_zoom.png"]
     assert all((tmp_path / "shots" / name).stat().st_size > 5000 for name in names)

@@ -21,6 +21,18 @@ from . import config
 EARTH_RADIUS_NM = 3440.065
 _HEX = re.compile(r"^~?[0-9a-fA-F]{6}$")
 _COMPASS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+_CATEGORY = re.compile(r"^[A-D][0-7]$")
+# ADS-B emitter categories (what the aircraft says it is), as the map words them.
+CATEGORIES = {
+    "A1": "LIGHT", "A2": "SMALL", "A3": "LARGE", "A4": "HIGH VORTEX", "A5": "HEAVY",
+    "A6": "HIGH PERFORMANCE", "A7": "ROTORCRAFT",
+    "B1": "GLIDER", "B2": "LIGHTER THAN AIR", "B3": "PARACHUTIST", "B4": "ULTRALIGHT",
+    "B6": "UAV", "B7": "SPACE VEHICLE",
+    "C1": "EMERGENCY VEHICLE", "C2": "SERVICE VEHICLE", "C3": "OBSTRUCTION",
+}
+_KINDS = {"A1": "light", "A2": "small", "A3": "jet", "A4": "jet", "A5": "heavy", "A6": "small", "A7": "heli",
+          "B1": "light", "B4": "light", "B6": "light", "B2": "other", "B3": "other", "B7": "other",
+          "C1": "other", "C2": "other", "C3": "other"}
 
 
 @dataclass
@@ -37,6 +49,7 @@ class Aircraft:
     track_deg: float | None = None
     vert_rate_fpm: int | None = None
     squawk: str = ""
+    category: str = ""                     # emitter category, "A1".."C3" (see CATEGORIES)
     seen_s: float = 0.0                    # seconds since any message from it
     seen_pos_s: float = 0.0                # seconds since its last position
     rssi_db: float | None = None
@@ -51,6 +64,23 @@ class Aircraft:
     @property
     def has_position(self) -> bool:
         return self.lat is not None and self.lon is not None
+
+    @property
+    def emergency(self) -> bool:
+        """Squawking hijack, radio failure or general emergency."""
+        return self.squawk in ("7500", "7600", "7700")
+
+    @property
+    def kind(self) -> str:
+        """What to draw it as: "heavy", "jet", "small", "light", "heli" or "other".
+
+        From the category it sends; until that has been heard, slow and low means light.
+        """
+        if self.category in _KINDS:
+            return _KINDS[self.category]
+        slow = self.speed_kt is not None and self.speed_kt < 180
+        low = self.altitude_ft is not None and self.altitude_ft < 12_000
+        return "light" if slow and low else "jet"
 
 
 # --------------------------------------------------------------------------- aircraft.json
@@ -97,6 +127,9 @@ def _aircraft(item) -> Aircraft | None:
     squawk = item.get("squawk")
     if isinstance(squawk, str) and re.fullmatch(r"[0-7]{4}", squawk):
         ac.squawk = squawk
+    category = item.get("category")
+    if isinstance(category, str) and _CATEGORY.match(category) and category in CATEGORIES:
+        ac.category = category
     ac.rssi_db = _number(item.get("rssi"), -200.0, 50.0)
     ac.messages = int(_number(item.get("messages"), 0, 1e12) or 0)
     return ac
@@ -194,17 +227,18 @@ class SimTraffic:
     """Made-up aircraft flying straight lines past a point, for the simulator and screenshots."""
 
     _FLIGHTS = (
-        # callsign, closest approach (bearing deg, nm), track deg, speed kt, altitude ft, climb fpm
-        ("UAL1482", 20, 18, 275, 452, 36000, 0),
-        ("DAL2210", 200, 42, 95, 438, 34000, 0),
-        ("SWA318", 140, 9, 12, 262, 9800, -1216),
-        ("AAL77", 310, 64, 152, 471, 38000, 0),
-        ("N512PS", 250, 5, 330, 118, 3500, 320),
-        ("FDX1403", 80, 95, 215, 486, 31000, -640),
-        ("SKW5521", 350, 30, 190, 301, 14500, 1856),
-        ("ACA846", 110, 130, 301, 463, 40000, 0),
-        ("ENY3655", 280, 22, 60, 228, 7200, -960),
-        ("", 45, 55, 240, 410, 28000, 0),            # callsign not received yet
+        # callsign, closest approach (bearing deg, nm), track deg, speed kt, altitude ft, climb fpm, category
+        ("UAL1482", 20, 18, 275, 452, 36000, 0, "A3"),
+        ("DAL2210", 200, 42, 95, 438, 34000, 0, "A3"),
+        ("SWA318", 140, 9, 12, 262, 9800, -1216, "A3"),
+        ("AAL77", 310, 64, 152, 471, 38000, 0, "A5"),
+        ("N512PS", 250, 5, 330, 118, 3500, 320, "A1"),
+        ("FDX1403", 80, 95, 215, 486, 31000, -640, "A5"),
+        ("SKW5521", 350, 30, 190, 301, 14500, 1856, "A2"),
+        ("ACA846", 110, 130, 301, 463, 40000, 0, "A5"),
+        ("ENY3655", 280, 22, 60, 228, 7200, -960, "A2"),
+        ("", 45, 55, 240, 410, 28000, 0, ""),        # callsign and category not received yet
+        ("N407MC", 165, 27, 285, 112, 1800, 0, "A7"),
     )
     _LEG_NM = 360.0                                   # each one loops along a line this long
 
@@ -216,7 +250,7 @@ class SimTraffic:
         """The traffic at time *now* (``time.monotonic()``) and a plausible message count."""
         t = (time.monotonic() if now is None else now) - self._t0
         out: list[Aircraft] = []
-        for i, (callsign, bearing, closest, track, speed, altitude, climb) in enumerate(self._FLIGHTS):
+        for i, (callsign, bearing, closest, track, speed, altitude, climb, category) in enumerate(self._FLIGHTS):
             along = ((i * 61.0 + speed * t / 3600.0 + self._LEG_NM / 2) % self._LEG_NM) - self._LEG_NM / 2
             east = closest * math.sin(math.radians(bearing)) + along * math.sin(math.radians(track))
             north = closest * math.cos(math.radians(bearing)) + along * math.cos(math.radians(track))
@@ -225,12 +259,12 @@ class SimTraffic:
                 lat=self.lat + north / 60.0,
                 lon=self.lon + east / (60.0 * max(0.05, math.cos(math.radians(self.lat)))),
                 altitude_ft=altitude, speed_kt=float(speed), track_deg=float(track),
-                vert_rate_fpm=climb, squawk=f"{(1200 + i * 0o1421) % 0o10000:04o}",
+                vert_rate_fpm=climb, squawk=f"{(1200 + i * 0o1421) % 0o10000:04o}", category=category,
                 seen_s=(i * 0.37) % 1.0, seen_pos_s=(i * 0.53) % 2.0,
                 rssi_db=-8.0 - 0.15 * math.hypot(east, north), messages=int(40 + t * (3 + i % 4))))
-        out.append(Aircraft(icao="A7C0DE", callsign="N731PI", speed_kt=96.0, track_deg=88.0,
+        out.append(Aircraft(icao="A7C0DE", callsign="N731PI", speed_kt=96.0, track_deg=88.0, category="A1",
                             altitude_ft=2400, seen_s=1.4, messages=int(3 + t / 4)))     # no position yet
         out.append(Aircraft(icao="AB12F4", callsign="EJA612", lat=self.lat - 0.094, lon=self.lon + 0.021,
-                            on_ground=True, speed_kt=14.0, track_deg=255.0, seen_s=0.6,
+                            on_ground=True, speed_kt=14.0, track_deg=255.0, seen_s=0.6, category="A2",
                             seen_pos_s=1.1, messages=int(20 + t)))
         return out, int(900 + 85 * t)

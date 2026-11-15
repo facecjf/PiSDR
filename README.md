@@ -18,6 +18,7 @@ owner expects rather than driving a desktop program through a remote-control soc
 | `software/pisdr/` | The receiver application (`python3 -m pisdr`) |
 | `software/config/bands.json` | Editable band / preset table |
 | `software/config/outlines.npz` | Coastlines, lakes and borders for the ADS-B map (Natural Earth, public domain; rebuilt by `software/tools/build_outlines.py`) |
+| `software/config/airlines.json` | Airline callsign prefix -> operator name for the ADS-B map (add your own in `~/.config/pisdr/airlines.json`) |
 | `software/config/zipcodes.npz` | US ZIP code -> town and position, for Settings → SYSTEM → Location (from [GeoNames](https://www.geonames.org), CC BY 4.0; rebuilt by `software/tools/build_zipcodes.py`) |
 | `software/tests/` | Test suite (`python -m pytest`); runs on a PC with no radio or display |
 | `software/tools/screenshots.py` | Renders the screenshots in `docs/images/` from the simulator |
@@ -71,7 +72,7 @@ HF conditions numbers and the aircraft in them are sample values.
 | ![Band picker](docs/images/ui_band_picker.png) | ![Settings, DISPLAY tab](docs/images/ui_settings.png) |
 | ![Memories page with the HF presets loaded](docs/images/ui_memories.png) | ![Inferno theme](docs/images/ui_theme_inferno.png) |
 | ![Green theme](docs/images/ui_theme_green.png) | ![ADS-B aircraft map](docs/images/ui_adsb_map.png) |
-| ![Menu page](docs/images/ui_menu.png) | |
+| ![Menu page](docs/images/ui_menu.png) | ![ADS-B flight list](docs/images/ui_adsb_list.png) |
 
 ## Controls at a glance
 
@@ -123,9 +124,13 @@ HF conditions numbers and the aircraft in them are sample values.
   zoom and seek signal to signal. A tap near a signal snaps to it.
 - Below 30 MHz an **HF conditions** panel (SFI/SSN/A/K, band conditions, 24 h Kp, local
   weather) sits beside the spectrum; the `☀ SFI K` chip above the meter toggles it.
-- Picking the **ADS-B 1090** band opens an **aircraft map**: a radar-style plot with range
-  rings, coastlines, callsigns, flight levels and trails, and a list of the nearest
-  aircraft. The keys become `ZOOM − / ZOOM + / LABELS / BACK`, the knob selects an aircraft.
+- Picking the **ADS-B 1090** band opens an **aircraft map** drawn like a desk-top flight
+  radar (after the [FR-360](https://sites.google.com/view/fr-360/home-page) layout, in the
+  colours of the theme): a scope with a sweep, aircraft silhouettes coloured by altitude,
+  callsigns and trails, a flight data panel that steps through the aircraft by itself, and
+  a sortable flight list.
+  The map takes the room of the soft-key bar and has its own buttons; the four keys still
+  act as `ZOOM − / ZOOM + / LIST / BACK`, the knob selects an aircraft.
   The dongle is lent to `dump1090` while the map is open (see `docs/02_software_setup.md`
   section 5f).
 - Encoder push cycles the tuning step (10 Hz ... 1 MHz), and so does a tap on a digit of the
@@ -165,7 +170,7 @@ cd software
 python -m pytest
 ```
 
-About 460 tests in about a minute, with no radio, display or network. They cover the
+About 480 tests in about a minute, with no radio, display or network. They cover the
 settings and memory files (including damaged ones), tuning, scanning, the record timer,
 signal detection, the Morse decoder, the ADS-B map, the ZIP code table, and every page of the UI including a few
 thousand random key presses, knob turns and taps. The real flowgraph code in

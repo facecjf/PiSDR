@@ -157,9 +157,15 @@ ADSB_RANGES_NM = ((10, 5), (25, 5), (50, 10), (100, 25), (150, 50), (250, 50))  
 ADSB_DEFAULT_RANGE_NM = 100
 ADSB_LABELS = ("FULL", "NAME", "OFF")   # callsign + flight level / callsign / selected aircraft only
 ADSB_TRAIL_POINTS = 180        # positions remembered per aircraft for its trail (about 3 minutes)
-ADSB_PANEL_W = 268             # aircraft list beside the map
+ADSB_PANEL_W = 284             # flight data beside the radar
+ADSB_AUTO_S = 6                # with nothing selected, each aircraft is shown for this long in turn
+ADSB_SWEEP_S = 5.0             # one turn of the radar sweep
+ADSB_ALT_BANDS_FT = (10_000, 25_000)   # below / between / above: the three colours of the aircraft
+ADSB_LIST_ROWS = 10            # flights per page of the list
 ADSB_SIM_HOME = (43.04, -87.91)   # where the simulator's traffic flies if no location is set
 OUTLINES_FILE = SOFTWARE_DIR / "config" / "outlines.npz"   # coastlines and borders for the map
+AIRLINES_FILE = SOFTWARE_DIR / "config" / "airlines.json"  # callsign prefix -> operator
+USER_AIRLINES_FILE = USER_CONFIG_DIR / "airlines.json"     # your additions, same form
 ZIPCODES_FILE = SOFTWARE_DIR / "config" / "zipcodes.npz"   # US ZIP code -> location (Settings > Location)
 
 # Post-demod audio DSP. HPF/LPF/notch are IIR biquads (C++); NR/NB are Python blocks that

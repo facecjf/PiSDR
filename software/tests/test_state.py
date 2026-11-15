@@ -32,6 +32,7 @@ def assert_sane(s: RadioState) -> None:
     assert s.theme in config.THEME_NAMES
     assert s.decoder in config.DECODERS
     assert s.adsb_range_nm in [nm for nm, _ring in config.ADSB_RANGES_NM] and s.adsb_labels in config.ADSB_LABELS
+    assert type(s.adsb_trails) is bool and type(s.adsb_ground) is bool
     assert not (s.adsb_mode and s.network_mode), "the dongle cannot be lent twice"
     assert s.filter_hz in config.FILTER_WIDTHS[s.mode]
     assert s.mode_spec.bandwidth_hz > 0

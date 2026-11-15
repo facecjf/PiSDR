@@ -57,7 +57,8 @@ def isolated_files(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "USER_CONFIG_DIR", cfg)
     for name, filename in (("SETTINGS_FILE", "settings.json"), ("MEMORIES_FILE", "memories.json"),
                            ("SCAN_LOG_FILE", "scan_log.json"), ("LOG_FILE", "pisdr.log"),
-                           ("SPACEWX_FILE", "spacewx.json"), ("USER_TAGS_FILE", "tags.json")):
+                           ("SPACEWX_FILE", "spacewx.json"), ("USER_TAGS_FILE", "tags.json"),
+                           ("USER_AIRLINES_FILE", "airlines.json")):
         monkeypatch.setattr(config, name, cfg / filename)
     monkeypatch.setattr(config, "RECORDINGS_DIR", tmp_path / "recordings")
     monkeypatch.setattr(config, "BACKLIGHT_DIR", tmp_path / "no-backlight")

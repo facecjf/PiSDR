@@ -22,12 +22,13 @@ import pytest
 
 import adsb_signal
 from conftest import needs_fake_gr, pump
-from pisdr import adsb, config, outlines
+from pisdr import adsb, airlines, config, outlines
 from pisdr.adsb import Aircraft
-from pisdr.qt import QtCore
+from pisdr.qt import QtCore, QtGui
 from pisdr.radio import adsb_decoder
+from pisdr.spacewx import SpaceWx
 from pisdr.state import RadioState
-from pisdr.ui import adsb_page
+from pisdr.ui import adsb_page, style
 from test_radio import open_sources, radio, sim, write_wav  # noqa: F401  (radio and sim are fixtures)
 from test_scan_and_timer import arm, timer, utc  # noqa: F401  (timer is a fixture)
 from test_state import assert_sane
@@ -76,6 +77,21 @@ def test_both_json_dialects_give_the_same_aircraft(data):
     assert quiet.speed_kt is None and quiet.track_deg is None and quiet.squawk == ""
 
 
+def test_category_says_what_kind_of_aircraft_it_is():
+    entries = [{"hex": f"{0xA00000 + i:06x}", "seen": 1.0, "category": category}
+               for i, category in enumerate(("A1", "A3", "A5", "A7", "A0", "D7", "a3", 3, None, "A33"))]
+    aircraft, _ = adsb.parse_aircraft_json(json.dumps({"aircraft": entries}))
+    assert [ac.category for ac in aircraft] == ["A1", "A3", "A5", "A7", "", "", "", "", "", ""]
+    assert [ac.kind for ac in aircraft[:4]] == ["light", "jet", "heavy", "heli"]
+    # Until the category has been heard: slow and low is drawn as a light aircraft.
+    assert Aircraft("A", speed_kt=110.0, altitude_ft=3000).kind == "light"
+    assert Aircraft("A", speed_kt=250.0, altitude_ft=3000).kind == "jet"
+    assert Aircraft("A", speed_kt=110.0).kind == Aircraft("A").kind == "jet"
+    assert set(adsb._KINDS) <= set(adsb.CATEGORIES)
+    assert [Aircraft("A", squawk=code).emergency for code in ("7500", "7600", "7700", "1200", "")] == \
+        [True, True, True, False, False]
+
+
 def test_non_icao_addresses_keep_their_marker():
     aircraft, _ = adsb.parse_aircraft_json(json.dumps(FA_JSON))
     assert aircraft[3].icao == "~C0FFEE" and aircraft[3].altitude_ft == 4000
@@ -104,6 +120,38 @@ def test_damaged_entries_are_dropped_one_by_one():
 def test_a_file_that_is_not_an_aircraft_list_is_refused(text):
     with pytest.raises(ValueError):
         adsb.parse_aircraft_json(text)
+
+
+# --------------------------------------------------------------------------- airlines
+def test_operator_from_the_callsign():
+    assert airlines.operator("UAL1482") == "United Airlines"
+    assert airlines.operator("FDX1403") == "FedEx" and airlines.operator("RCH871") == "US Air Force (Reach)"
+    assert airlines.operator("N512PS") == airlines.operator("N1") == airlines.operator("N12345") == airlines.PRIVATE_US
+    assert airlines.operator("NKS123") == "Spirit Airlines", "an airline starting with N is not a registration"
+    assert airlines.operator("ZZZ99") == airlines.UNKNOWN
+    assert airlines.operator("CGABC") == airlines.operator("TEAL71") == airlines.PRIVATE
+    assert airlines.operator("") == ""
+    table = airlines.table()
+    assert len(table) > 150 and all(len(code) == 3 and code.isupper() and name for code, name in table.items())
+    assert max(len(name) for name in table.values()) <= 24, "too long for the flight data panel"
+    for sim_callsign, *_rest in adsb.SimTraffic._FLIGHTS:
+        assert airlines.operator(sim_callsign) != airlines.UNKNOWN
+
+
+def test_your_own_airlines_file_adds_and_renames(isolated_files):
+    config.USER_AIRLINES_FILE.write_text(json.dumps(
+        {"operators": {"zzz": "My Flying Club", "UAL": "United", "TOOLONG": "x", "AB1": "x", "QQQ": 5, "WWW": " "}}))
+    airlines.reload()
+    assert airlines.operator("ZZZ99") == "My Flying Club" and airlines.operator("UAL1482") == "United"
+    assert airlines.operator("DAL2210") == "Delta Air Lines"
+    assert airlines.operator("QQQ1") == airlines.operator("WWW1") == airlines.UNKNOWN
+    for damaged in ("{not json", "[]", '{"operators": []}', ""):
+        config.USER_AIRLINES_FILE.write_text(damaged)
+        airlines.reload()
+        assert airlines.operator("UAL1482") == "United Airlines" and airlines.operator("ZZZ99") == airlines.UNKNOWN
+    config.USER_AIRLINES_FILE.unlink()
+    airlines.reload()
+    assert airlines.operator("UAL1482") == "United Airlines"
 
 
 # --------------------------------------------------------------------------- geometry
@@ -559,24 +607,67 @@ def chart(window, qapp):
     return window.adsb_page
 
 
+def keys(window) -> list[str]:
+    return [button.text() for button in window.softkeys.buttons]
+
+
+def pixel(widget, x: float, y: float) -> str:
+    """Colour of one pixel of a widget as it is drawn, "#rrggbb"."""
+    return widget.grab().toImage().pixelColor(int(x), int(y)).name()
+
+
+def commonest(widget) -> str:
+    """The colour most of a widget is drawn in: its background."""
+    image = widget.grab().toImage()
+    counts: dict[int, int] = {}
+    for x in range(0, image.width(), 5):
+        for y in range(0, image.height(), 5):
+            counts[image.pixel(x, y)] = counts.get(image.pixel(x, y), 0) + 1
+    return QtGui.QColor(max(counts, key=counts.get)).name()
+
+
 def test_picking_the_adsb_band_opens_the_map(window, qapp, chart):
     state = window.state
     assert state.adsb_mode and window.stack.currentIndex() == window.PAGE_ADSB
     assert state.band.name == "ADS-B 1090" and state.vfo_hz == config.ADSB_FREQ_HZ
-    assert [b.text() for b in window.softkeys.buttons] == ["ZOOM \u2212", "ZOOM +", "LABELS FULL", "BACK"]
+    assert keys(window) == ["ZOOM \u2212", "ZOOM +", "LIST", "BACK"]       # what the four keys do ...
+    assert not window.softkeys.isVisible(), "... though the bar is not shown: the map has its own buttons"
     assert "ADS-B MAP" in window.topbar_left.text() and "KNOB SELECT" in window.topbar_right.text()
     colours, brightness = image_stats(window)
     assert colours > 40 and brightness > 3, "map is blank"
     radar = chart.radar
     assert radar.centre == HOME and radar.centre_source == "settings"
-    assert len(radar._hits) >= 8, "aircraft were not drawn"
-    inside = [1 for _icao, x, y in radar._hits if 0 <= x <= radar.width() and 0 <= y <= radar.height()]
-    assert len(inside) >= 6
-    assert "aircraft" in chart.stats.text() and "on map" in chart.stats.text()
+    assert radar.total == len(chart.order) == len(state.aircraft) and radar.place.startswith("43.04")
+    assert len(radar._hits) >= 4, "aircraft were not drawn"
+    window.key_pressed(0)                              # ZOOM -: a wider view has more of them
+    window.key_pressed(0)
+    pump(qapp, 0.05)
+    assert len(radar._hits) >= 8
     window.key_pressed(3)                              # BACK
     assert not state.adsb_mode and window.stack.currentIndex() == window.PAGE_MAIN
     assert window.backend.running and state.vfo_hz == config.ADSB_FREQ_HZ
-    assert "ADS-B MAP" not in window.topbar_left.text()
+    assert "ADS-B MAP" not in window.topbar_left.text() and window.softkeys.isVisible()
+
+
+def test_back_button_on_the_map_returns_to_the_radio(window, qapp, chart):
+    radar = chart.radar
+    assert radar.back_btn.isVisible() and radar.back_btn.text() == "BACK"
+    box = radar.back_btn.geometry()
+    assert box.left() < 10 and box.bottom() > radar.height() - 10, "BACK belongs in the bottom-left corner"
+    radar.back_btn.click()
+    assert not window.state.adsb_mode and window.stack.currentIndex() == window.PAGE_MAIN
+    assert window.softkeys.isVisible() and window.backend.running
+    assert keys(window) == window.main_page.softkey_labels()
+    window._enter_adsb()                               # and again, by the fourth key
+    assert not window.softkeys.isVisible()
+    window.key_pressed(3)
+    assert not window.state.adsb_mode and window.softkeys.isVisible()
+
+
+def test_a_decoder_that_does_not_start_leaves_the_keys_on_screen(window, qapp, monkeypatch):
+    monkeypatch.setattr(window.backend, "_hw_adsb", lambda on: "No ADS-B decoder (dump1090) found - run install.sh")
+    window._enter_adsb()
+    assert window.stack.currentIndex() == window.PAGE_MAIN and window.softkeys.isVisible()
 
 
 def test_settings_row_opens_the_map_without_retuning(window, qapp):
@@ -597,7 +688,8 @@ def test_map_locks_the_ui_until_back(window, qapp, chart):
                    lambda: window.key_long_pressed(3), window.encoder_held, window.encoder_pushed,
                    lambda: window.knob_turned(5), lambda: press(window, QtCore.Qt.Key.Key_Escape),
                    lambda: press(window, QtCore.Qt.Key.Key_5), lambda: window.show_page(window.PAGE_SETTINGS),
-                   window._enter_network, window._enter_adsb):
+                   window._enter_network, window._enter_adsb, lambda: window.key_pressed(2),
+                   lambda: window.key_long_pressed(1), lambda: window.key_pressed(2)):
         vfo = window.state.vfo_hz
         action()
         assert window.stack.currentIndex() == window.PAGE_ADSB and window.state.adsb_mode
@@ -606,48 +698,132 @@ def test_map_locks_the_ui_until_back(window, qapp, chart):
     assert window.stack.currentIndex() == window.PAGE_MAIN
 
 
-def test_knob_walks_the_aircraft_nearest_first(window, qapp, chart):
+def test_the_radar_is_drawn_in_the_colours_of_the_theme(window, qapp):
+    window.state.wx_lat, window.state.wx_lon = HOME
+    seen = set()
+    for theme in config.THEME_NAMES:
+        window.state.set_theme(theme)
+        colours = style.THEMES[theme]
+        window._enter_adsb()
+        window.backend.poll_adsb()
+        window.knob_turned(1)
+        pump(qapp, 0.05)
+        assert image_stats(window)[0] > 40
+        radar, panel = window.adsb_page.radar, window.adsb_page.panel
+        ring = radar._static_layer().toImage().pixelColor(      # the ring of the selected range, due east
+            int(radar.width() / 2 + radar.radius()), radar.height() // 2).name()
+        found = (ring, commonest(radar), pixel(panel, panel.width() - 4, 120),
+                 pixel(panel, 1, 200), radar.zoom_in.grab().toImage().pixelColor(4, 16).name())
+        assert found == (colours["ACCENT"], colours["BG"], colours["BG"], colours["ACCENT"], colours["PANEL_HI"]), theme
+        seen.add(found)
+        window.key_pressed(2)                          # the list
+        pump(qapp, 0.05)
+        table = window.adsb_page.flight_list
+        assert pixel(table, 2, table.height() - 2) == colours["BG"]
+        assert pixel(table, table.width() // 2, table.HEADER_PX - 3) == colours["ACCENT"]
+        window.key_pressed(3)
+    assert len(seen) == len(config.THEME_NAMES), "a theme was drawn in the colours of another"
+
+
+def test_text_is_in_the_typeface_of_the_rest_of_the_program(window, qapp, chart):
+    for widget in (chart.radar, chart.panel, chart.flight_list):
+        font = adsb_page._font(widget, 20, True)
+        assert font.family() == window.softkeys.buttons[0].font().family()
+        assert font.pixelSize() == 20 and font.bold() and not adsb_page._font(widget, 11).bold()
+
+
+def test_the_map_fills_its_side_of_the_screen(window, qapp, chart):
+    radar, state = chart.radar, window.state
+    pump(qapp, 0.05)
+    by_icao = {ac.icao: ac for ac in chart.order}
+    assert any(by_icao[icao].distance_nm > state.adsb_range_nm for icao, _x, _y in radar._hits), \
+        "aircraft beyond the selected range belong on the map where it is wider than that"
+    rings = radar.rings_nm()
+    assert rings[:4] == [25, 50, 75, 100] and rings[-1] > state.adsb_range_nm, "rings go on out to the corners"
+    assert rings[-1] <= radar.reach_nm() < rings[-1] + 25
+    assert radar.reach_nm() * radar.scale() == pytest.approx(math.hypot(radar.width(), radar.height()) / 2)
+    for _ in range(len(config.ADSB_RANGES_NM)):
+        window.key_pressed(1)                          # ZOOM + to the closest view
+    pump(qapp, 0.05)
+    assert state.adsb_range_nm == config.ADSB_RANGES_NM[0][0] and radar.rings_nm()[:2] == [5, 10]
+    assert 0 < len(radar._hits) < sum(1 for ac in chart.order if ac.has_position)
+    assert radar.total == len(chart.order), "the count is of everything heard, on the map or not"
+    assert all(-12 <= x <= radar.width() + 12 and -12 <= y <= radar.height() + 12 for _icao, x, y in radar._hits)
+    assert all(by_icao[icao].distance_nm <= radar.reach_nm() * 1.05 for icao, _x, _y in radar._hits)
+
+
+def test_auto_shows_each_aircraft_in_turn(window, qapp, chart):
+    on_map = [ac.icao for ac in chart.order if ac.has_position]
+    assert chart.selected == "" and chart.panel.auto and chart._auto_timer.isActive()
+    assert chart._auto_timer.interval() == config.ADSB_AUTO_S * 1000
+    assert chart.shown == on_map[0] == chart.radar.selected
+    assert chart.panel.fields["callsign"] == chart.order[0].name
+    seen = [chart.shown]
+    for _ in range(len(on_map)):
+        chart.auto_step()
+        seen.append(chart.shown)
+    assert seen == on_map + on_map[:1], "AUTO goes round the aircraft on the map, nearest first"
+    assert chart.panel.fields["callsign"] == chart.order[0].name
+    # The one being shown flies out of range: AUTO moves on by itself.
+    chart.auto_step()
+    gone = chart.shown
+    window.state.set_aircraft([ac for ac in window.state.aircraft if ac.icao != gone], 10)
+    assert chart.shown and chart.shown != gone
+    window.state.set_aircraft([Aircraft("ABCDEF", callsign="N1")], 10)
+    assert chart.shown == "ABCDEF", "nothing on the map: AUTO shows what has been heard"
+    window.state.set_aircraft([])
+    assert chart.shown == "" and chart.panel.fields["callsign"] == "------"
+    pump(qapp, 0.05)
+    window.key_pressed(3)
+    assert not chart._auto_timer.isActive() and not chart.radar._sweep.isActive()
+
+
+def test_knob_holds_then_walks_the_aircraft_nearest_first(window, qapp, chart):
     order = chart.order
     distances = [ac.distance_nm for ac in order if ac.distance_nm is not None]
     assert distances == sorted(distances) and len(distances) >= 8
     assert order[-1].distance_nm is None, "aircraft without a position go last"
-    assert chart.selected == "" and "Turn the knob" in chart.detail.text()
-    window.knob_turned(1)
-    assert chart.selected == order[0].icao and chart.rows[0].property("selected")
-    assert order[0].name in chart.detail.text() and "nm" in chart.detail.text()
+    chart.auto_step()
+    shown = chart.shown
+    window.knob_turned(1)                              # the first movement holds what AUTO was showing
+    assert chart.selected == shown == order[1].icao and not chart.panel.auto
+    chart.auto_step()
+    assert chart.shown == shown, "AUTO must not move on while an aircraft is held"
     window.knob_turned(3)                              # one aircraft per movement, however fast
-    assert chart.selected == order[1].icao
-    for _ in range(len(order) - 2):
+    assert chart.selected == order[2].icao
+    assert chart.panel.fields["callsign"] == order[2].name and "nm" in chart.panel.fields["distance"]
+    for _ in range(len(order) - 3):
         window.knob_turned(1)
     assert chart.selected == order[-1].icao
-    assert "no position received yet" in chart.detail.text()
-    assert any(row.property("selected") for row in chart.rows), "the list did not scroll to the selection"
-    assert chart.more.text().endswith(f"of {len(order)}")
+    assert chart.panel.fields["distance"] == "no position"
     window.knob_turned(1)
     assert chart.selected == order[0].icao             # wraps
-    window.encoder_pushed()
-    assert chart.selected == "" and not any(row.property("selected") for row in chart.rows)
     window.knob_turned(-1)
     assert chart.selected == order[-1].icao
+    window.encoder_pushed()                            # back to AUTO, carrying on from there
+    assert chart.selected == "" and chart.panel.auto and chart.shown == order[-1].icao
+    chart.auto_step()
+    assert chart.shown == order[0].icao
 
 
-def test_tapping_selects_on_the_map_and_in_the_list(window, qapp, chart):
+def test_tapping_selects_on_the_radar(window, qapp, chart):
     radar = chart.radar
+    window.key_pressed(0)
+    pump(qapp, 0.05)
     icao, x, y = min(radar._hits, key=lambda hit: math.hypot(hit[1] - radar.width() / 2, hit[2] - 90))
     tap(radar, QtCore.QPoint(int(x) + 4, int(y) - 3))
-    assert chart.selected == icao == radar.selected
+    assert chart.selected == icao == radar.selected and not chart.panel.auto
     window.backend.poll_adsb()                         # the selection follows the aircraft as it moves
     pump(qapp, 0.05)
     assert chart.selected == icao
     empty = next(QtCore.QPoint(px, py) for px in range(10, radar.width(), 15) for py in range(10, radar.height(), 15)
-                 if all(math.hypot(px - hx, py - hy) > adsb_page.TAP_RADIUS_PX + 2 for _i, hx, hy in radar._hits))
+                 if radar.childAt(QtCore.QPoint(px, py)) is None
+                 and all(math.hypot(px - hx, py - hy) > adsb_page.TAP_RADIUS_PX + 2 for _i, hx, hy in radar._hits))
     tap(radar, empty)
-    assert chart.selected == ""
-    tap(chart.rows[2], QtCore.QPoint(20, 10))
-    assert chart.selected == chart.order[2].icao
+    assert chart.selected == "" and chart.panel.auto
 
 
-def test_zoom_and_label_keys(window, qapp, chart):
+def test_zoom_keys_and_buttons(window, qapp, chart):
     state = window.state
     ranges = [nm for nm, _ring in config.ADSB_RANGES_NM]
     radar = chart.radar
@@ -655,21 +831,60 @@ def test_zoom_and_label_keys(window, qapp, chart):
     window.key_pressed(1)                              # ZOOM +
     assert state.adsb_range_nm == ranges[ranges.index(config.ADSB_DEFAULT_RANGE_NM) - 1]
     assert radar.scale() > scale
+    radar.zoom_out.click()
+    assert state.adsb_range_nm == config.ADSB_DEFAULT_RANGE_NM
+    radar.zoom_in.click()
+    assert state.adsb_range_nm == ranges[ranges.index(config.ADSB_DEFAULT_RANGE_NM) - 1]
     for _ in range(len(ranges) + 2):
         window.key_pressed(0)                          # ZOOM - stops at the widest view
     assert state.adsb_range_nm == ranges[-1]
     pump(qapp, 0.05)
     east, north = adsb.project(*HOME, HOME[0] + ranges[-1] / 60.0, HOME[1])
     assert radar.to_screen(float(east), float(north))[1] == pytest.approx(adsb_page.EDGE_PX, abs=1.5), \
-        "the selected range should reach the top of the plot"
-    for expected in ("NAME", "OFF", "FULL"):
-        window.key_pressed(2)
-        assert state.adsb_labels == expected
-        assert window.softkeys.buttons[2].text() == f"LABELS {expected}"
+        "the selected range should be the outer ring"
+    state.save()
+    assert json.loads(config.SETTINGS_FILE.read_text())["adsb_range_nm"] == ranges[-1]
+
+
+def test_labels_trails_and_ground_from_the_screen_and_from_held_keys(window, qapp, chart):
+    state, radar = window.state, chart.radar
+    for expected in ("NAME", "OFF", "FULL"):           # hold LIST
+        window.key_long_pressed(2)
+        assert state.adsb_labels == expected and radar.labels_btn.text() == f"LABELS\n{expected}"
+        assert window.toast.text() == f"Labels {expected}" and keys(window)[2] == "LIST"
         pump(qapp, 0.02)
+    radar.labels_btn.click()
+    assert state.adsb_labels == "NAME"
+
+    assert state.adsb_trails and radar.trails_btn.text() == "TRAILS\nON"
+    window.key_long_pressed(1)                         # hold ZOOM +
+    assert not state.adsb_trails and radar.trails_btn.text() == "TRAILS\nOFF" and radar.trails_btn.property("off")
+    pump(qapp, 0.05)
+    radar.trails_btn.click()
+    assert state.adsb_trails and not radar.trails_btn.property("off")
+
+    grounded = [ac.icao for ac in state.aircraft if ac.on_ground]
+    assert grounded and all(icao in [ac.icao for ac in chart.order] for icao in grounded)
+    total = radar.total
+    window.key_long_pressed(0)                         # hold ZOOM -
+    assert not state.adsb_ground and radar.ground_btn.text() == "GROUND\nOFF"
+    assert "hidden" in window.toast.text()
+    assert not any(ac.on_ground for ac in chart.order) and radar.total == total - len(grounded)
+    pump(qapp, 0.05)
+    assert not any(icao in grounded for icao, _x, _y in radar._hits)
+    window.backend.poll_adsb()
+    assert not any(ac.on_ground for ac in chart.order)
+    radar.ground_btn.click()
+    assert state.adsb_ground and radar.total == total
+    state.toggle_adsb_trails()
+    state.toggle_adsb_ground()
     state.save()
     saved = json.loads(config.SETTINGS_FILE.read_text())
-    assert (saved["adsb_range_nm"], saved["adsb_labels"]) == (ranges[-1], "FULL")
+    assert (saved["adsb_labels"], saved["adsb_trails"], saved["adsb_ground"]) == ("NAME", False, False)
+    again = RadioState()
+    again.load()
+    assert (again.adsb_trails, again.adsb_ground) == (False, False)
+    assert_sane(again)
 
 
 def test_labels_follow_the_setting():
@@ -682,13 +897,58 @@ def test_labels_follow_the_setting():
     assert adsb_page.level_text(Aircraft("X", on_ground=True)) == "GND"
     assert adsb_page.level_text(Aircraft("X", altitude_ft=-200, vert_rate_fpm=-900)) == "000\u2193"
     assert adsb_page.level_text(Aircraft("X")) == ""
-    html = adsb_page.detail_html(Aircraft("A1B2C3", callsign="UAL123", lat=43.2, lon=-88.05, altitude_ft=35000,
-                                          vert_rate_fpm=-1216, speed_kt=451.6, track_deg=7.0, squawk="1200",
-                                          rssi_db=-7.2, distance_nm=11.4, bearing_deg=327.0))
-    for piece in ("UAL123", "A1B2C3", "35,000 ft", "\u21931,216 fpm", "452 kt", "007\u00b0", "11.4 nm", "NW", "1200"):
-        assert piece in html, piece
-    bare = adsb_page.detail_html(Aircraft("ABCDEF"))
-    assert "no callsign yet" in bare and "no position received yet" in bare
+
+
+def test_flight_data_spells_the_aircraft_out():
+    fields = adsb_page.flight_fields(Aircraft(
+        "A1B2C3", callsign="UAL123", lat=43.2, lon=-88.05, altitude_ft=35000, vert_rate_fpm=-1216,
+        speed_kt=451.6, track_deg=7.0, squawk="1200", rssi_db=-7.2, distance_nm=11.4, bearing_deg=327.0,
+        category="A3"))
+    assert fields == {"callsign": "UAL123", "type": "A1B2C3 LARGE", "airline": "United Airlines",
+                      "altitude": "35,000 ft", "climb": "\u21931,216 fpm", "speed": "452 kts", "track": "007 deg",
+                      "distance": "11.4 nm NW", "squawk": "1200", "signal": "SIG -7 dB"}
+    bare = adsb_page.flight_fields(Aircraft("ABCDEF"))
+    assert bare["callsign"] == "ABCDEF" and bare["type"] == "NO CALLSIGN YET" and bare["airline"] == "--"
+    assert (bare["altitude"], bare["climb"], bare["speed"], bare["distance"]) == ("--", "--", "--", "no position")
+    parked = adsb_page.flight_fields(Aircraft("ABCDEF", callsign="N512PS", on_ground=True, vert_rate_fpm=0,
+                                              lat=-33.9, lon=151.2))
+    assert parked["altitude"] == "GROUND" and parked["climb"] == "level" and parked["distance"] == "33.90S 151.20E"
+    assert parked["airline"] == "Private (US reg.)"
+    assert set(adsb_page.flight_fields(None)) == set(fields)
+
+
+@pytest.mark.parametrize("theme", config.THEME_NAMES)
+def test_aircraft_colours(theme):
+    style.apply_theme(theme)
+    try:
+        bottom, middle, top = style.ALTITUDE
+        assert len({bottom, middle, top, style.TEXT_DIM, style.BG}) == 5, "the altitude colours must differ"
+        low, high = config.ADSB_ALT_BANDS_FT
+        colour = adsb_page.aircraft_colour
+        assert colour(Aircraft("A", altitude_ft=low - 1), False) == bottom
+        assert colour(Aircraft("A", altitude_ft=low), False) == middle
+        assert colour(Aircraft("A", altitude_ft=high), False) == top
+        assert colour(Aircraft("A", on_ground=True), False) == colour(Aircraft("A"), False) == style.TEXT_DIM
+        assert colour(Aircraft("A", altitude_ft=30000, squawk="7700"), False) == style.REC
+        assert colour(Aircraft("A", altitude_ft=30000, lat=1.0, lon=1.0, seen_pos_s=config.ADSB_STALE_S + 1),
+                      False) == style.TEXT_DIM
+        assert colour(Aircraft("A", altitude_ft=30000, squawk="7700"), True) == style.TEXT
+    finally:
+        style.apply_theme(style.DEFAULT_THEME)
+
+
+def test_every_kind_of_aircraft_can_be_drawn(window, qapp, chart):
+    fleet = [Aircraft(f"{0xA00000 + i:06X}", callsign=f"TST{i}", lat=HOME[0] + 0.05 * i, lon=HOME[1] - 0.05 * i,
+                      altitude_ft=3000 * i, speed_kt=200.0, track_deg=None if i == 3 else 40.0 * i,
+                      category=category, on_ground=i == 5, squawk="7700" if i == 6 else "")
+             for i, category in enumerate(["", *adsb.CATEGORIES])]
+    assert {ac.kind for ac in fleet} == {"jet", "heavy", "small", "light", "heli", "other"}
+    window.state.set_aircraft(fleet, 50)
+    pump(qapp, 0.05)
+    assert len(chart.radar._hits) == len(fleet)
+    for _ in fleet:
+        window.knob_turned(1)
+        pump(qapp, 0.01)
 
 
 def test_trails_grow_stay_bounded_and_break_on_a_jump(window, qapp, chart):
@@ -720,16 +980,29 @@ def test_map_without_a_location_centres_on_the_traffic(window, qapp):
     window.backend.poll_adsb()
     centre = page.radar.centre
     assert page.radar.centre_source == "traffic" and centre is not None
+    assert page.radar.notes()[0] == "CENTRED ON TRAFFIC" and page.radar.place == ""
     assert adsb.distance_bearing(*centre, *config.ADSB_SIM_HOME)[0] < 150
     assert all(ac.distance_nm is None for ac in page.order), "no receiver position: no distances to show"
-    assert all("nm" not in row.right.text() for row in page.rows)
-    window.knob_turned(1)
-    assert "\u00b0N" in page.detail.text()
+    assert all(page.flight_list.cells(ac)[2] == "--" for ac in page.order)
+    assert page.panel.fields["distance"].endswith("W") and "nm" not in page.panel.fields["distance"]
     window.backend._traffic._t0 -= 300.0
     window.backend.poll_adsb()
     assert page.radar.centre == centre, "the map must not slide about with the traffic"
+    window.key_pressed(0)
+    window.key_pressed(0)
     pump(qapp, 0.05)
     assert len(page.radar._hits) >= 5
+    window.key_pressed(3)
+
+
+def test_a_location_guessed_from_the_ip_address_is_named_and_flagged(window, qapp):
+    window.state.space_wx = SpaceWx(wx={"lat": 43.0, "lon": -88.0, "city": "Milwaukee", "geo": "ip"})
+    window._enter_adsb()
+    window.backend.poll_adsb()
+    radar = window.adsb_page.radar
+    assert radar.centre_source == "ip" and radar.place == "MILWAUKEE"
+    assert radar.notes() == ["CENTRE FROM IP ADDRESS", "SET A ZIP IN SETTINGS"]
+    pump(qapp, 0.05)
     window.key_pressed(3)
 
 
@@ -754,17 +1027,148 @@ def test_no_decoder_means_a_message_and_an_ordinary_band_change(window, qapp, mo
     assert window.toast.text().startswith("No ADS-B decoder")
 
 
-@pytest.mark.parametrize("theme", config.THEME_NAMES)
-def test_map_draws_in_every_theme(window, qapp, theme):
-    window.state.set_theme(theme)
-    window.state.wx_lat, window.state.wx_lon = HOME
-    window._enter_adsb()
-    window.backend.poll_adsb()
-    window.knob_turned(1)
+def test_everything_on_the_page_fits(window, qapp, chart):
+    radar, panel = chart.radar, chart.panel
+    bottom = chart.mapTo(window, QtCore.QPoint(0, chart.height())).y()
+    assert bottom == window.height(), "the page has the soft keys' room as well"
+    assert radar.width() + panel.width() == chart.width() and radar.height() == panel.height() == chart.height()
+    assert radar.radius() * 2 + 2 * adsb_page.EDGE_PX == min(radar.width(), radar.height())
+    buttons = [radar.zoom_in, radar.zoom_out, radar.labels_btn, radar.trails_btn, radar.ground_btn, radar.back_btn]
+    for button in buttons:
+        box = button.geometry()
+        assert radar.rect().contains(box) and button.isVisible(), button.text()
+        assert not any(box.intersects(other.geometry()) for other in buttons if other is not button)
+        assert any(QtCore.QRectF(box) == kept for kept in radar._reserved()), "labels must keep clear of the buttons"
+    centre = QtCore.QPoint(radar.width() // 2, radar.height() // 2)
+    assert not any(button.geometry().adjusted(-40, -40, 40, 40).contains(centre) for button in buttons)
+    assert panel.rect().contains(panel.list_btn.geometry())
+    window.key_pressed(2)
     pump(qapp, 0.05)
-    colours, _ = image_stats(window)
-    assert colours > 40
+    table = chart.flight_list
+    assert table.size() == chart.size() and table.row_height() >= 30 and not window.softkeys.isVisible()
+    header = [table.radar_btn, *table.sort_buttons.values(), table.previous, table.following]
+    for button in header:
+        assert table.rect().contains(button.geometry()) and button.geometry().bottom() < table.HEADER_PX
+        assert not any(button.geometry().intersects(other.geometry()) for other in header if other is not button)
+
+
+def test_sweep_turns_only_while_the_radar_is_on_screen(window, qapp, chart):
+    radar = chart.radar
+    assert radar._sweep.isActive()
+    start = radar._sweep_deg
+    pump(qapp, 0.4)
+    turned = (radar._sweep_deg - start) % 360
+    assert 0.4 * 360 / config.ADSB_SWEEP_S * 0.5 < turned < 0.4 * 360 / config.ADSB_SWEEP_S * 2.0
+    window.key_pressed(2)                              # LIST
+    pump(qapp, 0.02)
+    assert not radar._sweep.isActive()
+    window.key_pressed(2)                              # RADAR
+    pump(qapp, 0.02)
+    assert radar._sweep.isActive()
     window.key_pressed(3)
+    pump(qapp, 0.02)
+    assert not radar._sweep.isActive()
+
+
+# --------------------------------------------------------------------------- the flight list
+def test_list_key_shows_the_flights_as_a_table(window, qapp, chart):
+    table = chart.flight_list
+    window.key_pressed(2)
+    pump(qapp, 0.05)
+    assert chart.view == "list" and table.isVisible() and not chart.radar.isVisible()
+    assert keys(window) == ["SORT DIST", "PAGE", "RADAR", "BACK"]
+    assert table.flights == chart.order and len(table.flights) == 13
+    assert table.pages == 2 and table.page == 0 and len(table.visible()) == config.ADSB_LIST_ROWS
+    assert table.shown == chart.shown == chart.order[0].icao
+    colours, _ = image_stats(window)
+    assert colours > 20
+    united = next(ac for ac in chart.order if ac.callsign == "UAL1482")
+    assert table.cells(united) == ("UAL1482", "UNITED AIRLINES", f"{united.distance_nm:.0f}", "36000", "452")
+    parked = next(ac for ac in chart.order if ac.on_ground)
+    assert table.cells(parked)[3] == "GND"
+    assert table.cells(Aircraft("ABCDEF")) == ("ABCDEF", "NO CALLSIGN YET", "--", "--", "--")
+    window.key_pressed(1)                              # PAGE
+    assert table.page == 1 and len(table.visible()) == 3
+    window.key_pressed(1)
+    assert table.page == 0                             # wraps
+    table.following.click()
+    assert table.page == 1
+    table.previous.click()
+    table.previous.click()
+    assert table.page == 1
+    pump(qapp, 0.05)
+    window.key_pressed(2)                              # RADAR
+    assert chart.view == "radar" and keys(window)[2] == "LIST" and chart.radar.isVisible()
+    chart.panel.list_btn.click()
+    assert chart.view == "list" and keys(window)[2] == "RADAR"
+    chart.flight_list.radar_btn.click()                # on the screen, as there is no soft-key bar
+    assert chart.view == "radar" and chart.radar.isVisible()
+    chart.panel.list_btn.click()
+    window.key_pressed(3)
+    assert not window.state.adsb_mode
+    window._enter_adsb()
+    assert chart.view == "radar", "the map always opens on the radar"
+    window.key_pressed(3)
+
+
+def test_list_sorts_by_distance_altitude_or_airline(window, qapp, chart):
+    table = chart.flight_list
+    window.key_pressed(2)
+    assert table.sort_buttons["DIST"].property("lit")
+    window.key_pressed(0)
+    assert chart.sort == "ALT" and keys(window)[0] == "SORT ALT" and table.sort_buttons["ALT"].property("lit")
+    assert not table.sort_buttons["DIST"].property("lit")
+    flights = table.flights
+    assert flights[0].on_ground
+    heights = [ac.altitude_ft for ac in flights if not ac.on_ground]
+    assert heights == sorted(heights) and len(flights) == len(chart.order)
+    window.key_pressed(0)
+    assert chart.sort == "AIRLINE"
+    names = [table.cells(ac)[1] for ac in table.flights if ac.callsign]
+    assert names == sorted(names) and names[0] == "AIR CANADA"
+    assert not table.flights[-1].callsign, "no callsign yet: at the end"
+    table.sort_buttons["DIST"].click()
+    assert chart.sort == "DIST" and table.flights == chart.order and keys(window)[0] == "SORT DIST"
+    lost = [Aircraft("A00001", callsign="B"), Aircraft("A00002", callsign="A", altitude_ft=500)]
+    assert [ac.icao for ac in adsb_page.sorted_flights(lost, "ALT")] == ["A00002", "A00001"]
+    window.key_pressed(3)
+    window._enter_adsb()
+    window.key_pressed(2)
+    assert chart.sort == "DIST" or keys(window)[0] == f"SORT {chart.sort}"
+
+
+def test_knob_and_taps_in_the_list(window, qapp, chart):
+    table = chart.flight_list
+    window.key_pressed(2)
+    window.key_pressed(0)                              # by altitude
+    pump(qapp, 0.05)
+    flights = table.flights
+    window.knob_turned(1)                              # holds the one AUTO was showing
+    assert chart.selected == chart.order[0].icao and table.shown == chart.selected
+    index = [ac.icao for ac in flights].index(chart.selected)
+    for step in range(1, len(flights)):
+        window.knob_turned(1)
+        expected = (index + step) % len(flights)
+        assert chart.selected == flights[expected].icao
+        assert table.page == expected // config.ADSB_LIST_ROWS, "the list did not turn to the selection"
+    window.encoder_pushed()                            # show it on the radar
+    assert chart.view == "radar" and chart.selected == flights[index - 1].icao and not chart.panel.auto
+    assert chart.panel.fields["callsign"] == flights[index - 1].name
+
+    window.key_pressed(2)                              # the list opens at the page of the selection
+    pump(qapp, 0.05)
+    assert table.page == 1 and len(table.visible()) == 3
+    target = table.visible()[1]
+    tap(table, QtCore.QPoint(200, int(table.HEADER_PX + 1.5 * table.row_height())))
+    assert chart.selected == target.icao and chart.view == "radar"
+    window.key_pressed(2)
+    pump(qapp, 0.05)
+    held = chart.selected
+    assert table.page == 1
+    tap(table, QtCore.QPoint(200, int(table.HEADER_PX + 6.5 * table.row_height())))
+    assert chart.selected == held and chart.view == "list", "a tap below the last line does nothing"
+    tap(table, QtCore.QPoint(table.width() // 2, 20))  # the heading is not a line either
+    assert chart.selected == held
 
 
 # --------------------------------------------------------------------------- real decoder

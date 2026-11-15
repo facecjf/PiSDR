@@ -26,7 +26,7 @@ os.environ["PISDR_RECORDINGS_DIR"] = os.path.join(_scratch, "recordings")
 SOFTWARE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SOFTWARE_DIR))
 
-from pisdr import config, spacewx  # noqa: E402
+from pisdr import config, spacewx, zipcodes  # noqa: E402
 from pisdr.qt import QtWidgets  # noqa: E402
 from pisdr.radio.backend_sim import SimBackend  # noqa: E402
 from pisdr.state import RadioState  # noqa: E402
@@ -125,9 +125,11 @@ def main(argv: list[str]) -> int:
     w.show_page(w.PAGE_MEMORIES)
     studio.shot("ui_memories")
 
-    # ADS-B map: the simulator's traffic around a sample location, flown for a while first
-    # so the aircraft have trails, with one of them selected.
-    s.wx_lat, s.wx_lon = config.ADSB_SIM_HOME
+    # ADS-B map: the simulator's traffic around a sample location (a ZIP code in the middle
+    # of it, so the radar is named), flown for a while first so the aircraft have trails,
+    # with one of them selected.
+    s.wx_zip = "53203"
+    s.wx_lat, s.wx_lon = zipcodes.lookup(s.wx_zip)[:2]
     w.show_main()
     w._enter_adsb()
     for _ in range(config.ADSB_TRAIL_POINTS):
@@ -137,6 +139,8 @@ def main(argv: list[str]) -> int:
     for _ in range(4):
         w.knob_turned(1)
     studio.shot("ui_adsb_map", settle_s=2.3)           # two real polls: a true msg/s figure
+    w.key_pressed(2)                                   # LIST
+    studio.shot("ui_adsb_list")
     w.key_pressed(3)
 
     w.close()

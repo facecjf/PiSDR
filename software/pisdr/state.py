@@ -60,7 +60,7 @@ class RadioState(QObject):
                  "spectrum_zoom", "spectrum_avg", "peak_hold",
                  "spectrum_style", "wf_palette", "spectrum_labels", "snap_mode",
                  "timer_armed", "timer_start_min", "timer_length_min", "timer_daily", "timer_target",
-                 "decoder", "rds_enabled", "adsb_range_nm", "adsb_labels",
+                 "decoder", "rds_enabled", "adsb_range_nm", "adsb_labels", "adsb_trails", "adsb_ground",
                  "vfo_b", "sliders_visible")
 
     def __init__(self, bands: list[Band] | None = None, parent: QObject | None = None) -> None:
@@ -162,6 +162,8 @@ class RadioState(QObject):
         self.adsb_error: str = ""          # why the decoder stopped, if it did
         self.adsb_range_nm: int = config.ADSB_DEFAULT_RANGE_NM
         self.adsb_labels: str = config.ADSB_LABELS[0]
+        self.adsb_trails: bool = True      # draw where each aircraft has been
+        self.adsb_ground: bool = True      # show aircraft on the ground
 
         self._func_last_used = time.monotonic()
         self._knob_hist: collections.deque = collections.deque()
@@ -635,6 +637,12 @@ class RadioState(QObject):
     def cycle_adsb_labels(self, delta: int = 1) -> None:
         self._set("adsb_labels", _cycle(config.ADSB_LABELS, self.adsb_labels, delta))
 
+    def toggle_adsb_trails(self) -> None:
+        self._set("adsb_trails", not self.adsb_trails)
+
+    def toggle_adsb_ground(self) -> None:
+        self._set("adsb_ground", not self.adsb_ground)
+
     # ------------------------------------------------------------------ memories
     @property
     def memory_groups(self) -> list[str]:
@@ -970,6 +978,8 @@ class RadioState(QObject):
         self.adsb_range_nm = _choice(self.adsb_range_nm, [nm for nm, _ring in config.ADSB_RANGES_NM],
                                      config.ADSB_DEFAULT_RANGE_NM)
         self.adsb_labels = _choice(self.adsb_labels, config.ADSB_LABELS, config.ADSB_LABELS[0])
+        self.adsb_trails = _flag(self.adsb_trails, True)
+        self.adsb_ground = _flag(self.adsb_ground, True)
 
 
 def _choice(value, choices, default):
