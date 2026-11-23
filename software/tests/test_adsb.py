@@ -29,7 +29,7 @@ from pisdr.radio import adsb_decoder
 from pisdr.spacewx import SpaceWx
 from pisdr.state import RadioState
 from pisdr.ui import adsb_page, style
-from test_radio import open_sources, radio, sim, write_wav  # noqa: F401  (radio and sim are fixtures)
+from test_radio import open_sources, radio, sim, sim_one, write_wav  # noqa: F401  (radio, sim, sim_one: fixtures)
 from test_scan_and_timer import arm, timer, utc  # noqa: F401  (timer is a fixture)
 from test_state import assert_sane
 from test_ui import image_stats, press, rows, tap
@@ -460,7 +460,8 @@ def test_bias_tee_goes_through_rtl_biast_when_the_decoder_has_no_switch(decoder_
 
 
 # --------------------------------------------------------------------------- back ends
-def test_simulator_lends_the_dongle_and_takes_it_back(sim, state, qapp, tmp_path):   # noqa: F811
+def test_simulator_lends_the_dongle_and_takes_it_back(sim_one, state, qapp, tmp_path):   # noqa: F811
+    sim = sim_one                                                        # one dongle: the map takes it
     state.set_recording(True)
     assert sim.start_adsb_mode() is None
     assert state.adsb_mode and state.dongle_lent and not state.recording and not sim.running
@@ -503,7 +504,8 @@ def test_network_mode_keeps_the_map_out(sim, state):   # noqa: F811
     assert sim.stop_network_mode() is None
 
 
-def test_record_timer_waits_while_the_map_has_the_dongle(sim, state, timer, clock):   # noqa: F811
+def test_record_timer_waits_while_the_map_has_the_dongle(sim_one, state, timer, clock):   # noqa: F811
+    sim = sim_one
     arm(state, 20 * 60, length_min=30)
     sim.start_adsb_mode()
     clock.wall = utc(20, 0)
@@ -626,10 +628,50 @@ def commonest(widget) -> str:
     return QtGui.QColor(max(counts, key=counts.get)).name()
 
 
-def test_picking_the_adsb_band_opens_the_map(window, qapp, chart):
+@pytest.fixture
+def one_dongle_chart(one_dongle_window, qapp):
+    """The same on a radio with one dongle, which the map takes from the receiver."""
+    window = one_dongle_window
+    window.state.wx_lat, window.state.wx_lon = HOME
+    window.show_page(window.PAGE_BAND)
+    window.band_page.buttons[adsb_tile(window)].click()
+    window.backend.poll_adsb()
+    pump(qapp, 0.05)
+    return window.adsb_page
+
+
+def test_the_map_has_its_own_dongle_and_the_radio_plays_on(window, qapp):
+    state = window.state
+    state.tune_to(100_100_000, "WFM", 100_000)
+    band = state.band.name
+    window.show_page(window.PAGE_BAND)
+    window.band_page.buttons[adsb_tile(window)].click()
+    assert state.adsb_mode and window.stack.currentIndex() == window.PAGE_ADSB
+    assert (state.vfo_hz, state.band.name) == (100_100_000, band), "the receiver was retuned to 1090 MHz"
+    assert window.backend.running and not state.receiver_paused and state.tuner == "XTR"
+    top = window.topbar_left.text()
+    assert "ADS-B MAP" in top and "100.1000 MHz WFM" in top and "paused" not in top
+    window.key_pressed(3)                              # BACK
+    assert not state.adsb_mode and window.stack.currentIndex() == window.PAGE_MAIN
+    assert state.vfo_hz == 100_100_000 and window.backend.running
+    assert not window.toast.isVisible() or "dongle" not in window.toast.text()
+
+
+def test_the_map_says_so_when_the_receiver_had_to_stop_for_it(window, qapp):
+    state = window.state
+    state.set_vfo(7_200_000)                           # HF is on the V3, which the map needs
+    window._enter_adsb()
+    assert state.adsb_mode and state.receiver_paused and "receiver paused" in window.topbar_left.text()
+    window.key_pressed(3)
+    assert window.backend.running and window.toast.text() == "Radio back on the dongle"
+
+
+def test_picking_the_adsb_band_opens_the_map(one_dongle_window, qapp, one_dongle_chart):
+    window, chart = one_dongle_window, one_dongle_chart
     state = window.state
     assert state.adsb_mode and window.stack.currentIndex() == window.PAGE_ADSB
     assert state.band.name == "ADS-B 1090" and state.vfo_hz == config.ADSB_FREQ_HZ
+    assert "receiver paused" in window.topbar_left.text()
     assert keys(window) == ["ZOOM \u2212", "ZOOM +", "LIST", "BACK"]       # what the four keys do ...
     assert not window.softkeys.isVisible(), "... though the bar is not shown: the map has its own buttons"
     assert "ADS-B MAP" in window.topbar_left.text() and "KNOB SELECT" in window.topbar_right.text()
@@ -1018,7 +1060,8 @@ def test_decoder_failure_is_shown_on_the_map(window, qapp, chart, monkeypatch):
     assert window.stack.currentIndex() == window.PAGE_MAIN and window.state.adsb_error == ""
 
 
-def test_no_decoder_means_a_message_and_an_ordinary_band_change(window, qapp, monkeypatch):
+def test_no_decoder_means_a_message_and_an_ordinary_band_change(one_dongle_window, qapp, monkeypatch):
+    window = one_dongle_window
     monkeypatch.setattr(window.backend, "_hw_adsb", lambda on: "No ADS-B decoder (dump1090) found - run install.sh")
     window.show_page(window.PAGE_BAND)
     window.band_page.buttons[adsb_tile(window)].click()

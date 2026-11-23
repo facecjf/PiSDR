@@ -1,8 +1,8 @@
 """ADS-B aircraft: reading a decoder's ``aircraft.json``, map geometry and simulated traffic.
 
-The RTL-SDR cannot demodulate 1090 MHz Mode S and the voice receiver at the same time, so in
-ADS-B mode the dongle is lent to a dump1090-family decoder (see :mod:`pisdr.radio.adsb_decoder`).
-That program does the radio work and writes the list of aircraft it is tracking to a JSON
+One RTL-SDR cannot demodulate 1090 MHz Mode S and the voice receiver at the same time, so in
+ADS-B mode a dump1090-family decoder (see :mod:`pisdr.radio.adsb_decoder`) runs on the second
+dongle, or is lent the only one. That program does the radio work and writes the list of aircraft it is tracking to a JSON
 file once a second; this module turns that file into :class:`Aircraft` objects and does the
 arithmetic the map needs. Nothing here touches Qt or the radio.
 """

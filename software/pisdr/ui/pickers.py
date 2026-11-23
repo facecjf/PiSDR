@@ -164,6 +164,9 @@ class BandPicker(_GridPicker):
         self._highlight()
 
     def activate(self, index: int) -> None:
+        if self.state.adsb_own_dongle and adsb.is_adsb_band(self.state.bands[index]):
+            self.adsb_picked.emit()      # the map has its own dongle: the receiver stays where it is
+            return
         self.state.select_band(index)
         if adsb.is_adsb_band(self.state.band):
             self.adsb_picked.emit()

@@ -127,9 +127,11 @@ def main(argv: list[str]) -> int:
 
     # ADS-B map: the simulator's traffic around a sample location (a ZIP code in the middle
     # of it, so the radar is named), flown for a while first so the aircraft have trails,
-    # with one of them selected.
+    # with one of them selected. The receiver is on 2 m, which the main tuner has, so it
+    # plays on beside the map (from an HF band it would have to stop: the V3 does both).
     s.wx_zip = "53203"
     s.wx_lat, s.wx_lon = zipcodes.lookup(s.wx_zip)[:2]
+    studio.band("2 m")
     w.show_main()
     w._enter_adsb()
     for _ in range(config.ADSB_TRAIL_POINTS):

@@ -179,6 +179,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.backend = backend
         self.scanner = Scanner(state, self)
         self.rec_timer = RecTimer(state, self)
+        self.rec_timer.must_wait = backend.waits_for_adsb
         self.backlight = Backlight()
         self._closed = False
         self.setWindowTitle("PiSDR")
@@ -423,11 +424,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.show_message(error or "Radio back on the dongle")
 
     def _enter_adsb(self) -> None:
-        """Lend the dongle to the ADS-B decoder and show its map (from the band picker or Settings)."""
+        """Start the ADS-B decoder and show its map (from the band picker or Settings). With
+        two dongles the receiver plays on; with one, the dongle is lent to the decoder."""
         if self.state.adsb_mode:
             return
         self.scanner.stop()
-        self.show_message("Handing the dongle to the ADS-B decoder...")
+        self.show_message("Starting the ADS-B decoder...")
         QtWidgets.QApplication.processEvents()
         error = self.backend.start_adsb_mode()
         if error:
@@ -437,11 +439,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.show_page(self.PAGE_ADSB)
 
     def _leave_adsb(self) -> None:
-        self.show_message("Taking the dongle back...")
+        lent = self.state.receiver_paused
+        self.show_message("Taking the dongle back..." if lent else "Stopping the ADS-B decoder...")
         QtWidgets.QApplication.processEvents()
         error = self.backend.stop_adsb_mode()
         self.show_main()
-        self.show_message(error or "Radio back on the dongle")
+        if error or lent:
+            self.show_message(error or "Radio back on the dongle")
+        else:
+            self.toast.hide()
 
     def _refresh_main_softkeys(self) -> None:
         if self.stack.currentIndex() == self.PAGE_MAIN:
@@ -622,10 +628,11 @@ class MainWindow(QtWidgets.QMainWindow):
             f"<span style='color:{dim}'>SQL</span> {'open' if s.squelch_db <= config.SQUELCH_MIN_DB else f'{s.squelch_db:.0f}'}",
             f"<span style='color:{dim}'>GAIN</span> {'AGC' if s.agc else f'{s.gain_db:.0f} dB'}",
         ]
-        if s.adsb_mode:      # the receiver is paused: its mode, step and squelch mean nothing here
+        if s.adsb_mode:      # the knob and keys belong to the map; say what the receiver is doing meanwhile
+            radio = (f"<span style='color:{dim}'>receiver paused</span>" if s.receiver_paused else
+                     f"<span style='color:{dim}'>radio</span> {s.vfo_hz / 1e6:.4f} MHz {s.mode}")
             parts = [f"<span style='color:{acc}'><b>ADS-B MAP</b></span>",
-                     f"{config.ADSB_FREQ_HZ / 1e6:.0f} MHz",
-                     f"<span style='color:{dim}'>receiver paused</span>"]
+                     f"{config.ADSB_FREQ_HZ / 1e6:.0f} MHz", radio]
         if s.network_mode:
             parts.append(f"<span style='color:{acc}'><b>NET</b></span>")
         if s.bias_tee:

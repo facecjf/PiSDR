@@ -6,7 +6,9 @@ something to tune to, a DC spike where the dongle would have one, and a slowly f
 carrier wherever the VFO happens to be so the S-meter moves. No audio is generated.
 
 RDS, data decoders, playback, network mode and ADS-B traffic are faked just enough to
-exercise the UI.
+exercise the UI. So are the two dongles of the real radio: the simulator moves between a
+pretend XTR and a pretend V3 as the frequency asks, and its ADS-B map leaves the receiver
+running the way the second dongle does. Pass ``lineup=Lineup()`` for a one-dongle radio.
 """
 from __future__ import annotations
 
@@ -21,6 +23,10 @@ from ..adsb import SimTraffic, receiver_position
 from ..qt import QTimer
 from .backend import Backend
 from .cw_decoder import MORSE_TABLE, MorseDecoder
+from .tuners import V3, XTR, Dongle, Lineup
+
+SIM_LINEUP = Lineup(Dongle(0, XTR, "Nooelec", "SMArt XTR (simulated)", "SIM-XTR"),
+                    Dongle(1, V3, "RTLSDRBlog", "Blog V3 (simulated)", "SIM-V3"))
 
 _SIM_CW_TEXT = "CQ CQ CQ DE PISDR PISDR K "
 _SIM_CW_WPM = 18
@@ -51,8 +57,8 @@ def _sim_cw_pattern(text: str, wpm: int, rate: int) -> np.ndarray:
 
 
 class SimBackend(Backend):
-    def __init__(self, state, parent=None, reason: str = "") -> None:
-        super().__init__(state, parent)
+    def __init__(self, state, parent=None, reason: str = "", lineup: Lineup | None = None) -> None:
+        super().__init__(state, parent, lineup or SIM_LINEUP)
         self.reason = reason
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -183,14 +189,19 @@ class SimBackend(Backend):
             self._timer.start(int(1000 / self.state.fft_fps))
         return None
 
+    def _hw_release(self) -> None:
+        self._timer.stop()
+
+    def _hw_reopen(self) -> str | None:
+        self._timer.start(int(1000 / self.state.fft_fps))
+        return None
+
     def _hw_adsb(self, on: bool) -> str | None:
         if on:
-            self._timer.stop()
             where = receiver_position(self.state) or config.ADSB_SIM_HOME
             self._traffic = SimTraffic(where[0], where[1])
         else:
             self._traffic = None
-            self._timer.start(int(1000 / self.state.fft_fps))
         return None
 
     def _hw_adsb_poll(self) -> tuple[list, int, str]:

@@ -16,6 +16,7 @@ import pytest
 import fakegr
 from conftest import needs_fake_gr, pump
 from pisdr import config
+from pisdr.radio import tuners
 from pisdr.radio.backend_sim import SimBackend
 from pisdr.radio.fft_sink import FftSink
 from pisdr.state import RadioState
@@ -35,17 +36,30 @@ def write_wav(path, seconds: float = 0.5, rate: int = config.AUDIO_RATE, width: 
 
 
 # --------------------------------------------------------------------------- simulator / view maths
-@pytest.fixture
-def sim(state):
-    backend = SimBackend(state, reason="--sim requested")
+def _sim(state, lineup=None):
+    backend = SimBackend(state, reason="--sim requested", lineup=lineup)
     backend.frames = []
     backend.views = []
+    backend.messages = []
     backend.spectrum_ready.connect(backend.frames.append)
     backend.center_changed.connect(lambda c, s: backend.views.append((c, s)))
+    backend.status.connect(backend.messages.append)
     backend.start()
     backend._timer.stop()                 # frames on demand via _tick()
     yield backend
     backend.stop()
+
+
+@pytest.fixture
+def sim(state):
+    """The simulator as it comes: an XTR and a V3."""
+    yield from _sim(state)
+
+
+@pytest.fixture
+def sim_one(state):
+    """The simulator with a single dongle."""
+    yield from _sim(state, tuners.Lineup())
 
 
 def assert_view_ok(backend, state) -> None:
@@ -185,17 +199,33 @@ def test_fft_frame_rate_is_limited_and_can_be_paused(clock, monkeypatch):
 pytestmark_gr = needs_fake_gr
 
 
-@pytest.fixture
-def radio(state, monkeypatch):
+def _radio(state, monkeypatch, lineup=None):
     from pisdr.radio import flowgraph
     monkeypatch.setattr(flowgraph.time, "sleep", lambda seconds: None)
-    backend = flowgraph.GnuRadioBackend(state)
+    backend = flowgraph.GnuRadioBackend(state, lineup=lineup)
     backend.messages = []
     backend.status.connect(backend.messages.append)
     backend.start()
     backend._poll.stop()
     yield backend
     backend.stop()
+
+
+@pytest.fixture
+def radio(state, monkeypatch):
+    """The GNU Radio back end on one dongle of no particular kind."""
+    yield from _radio(state, monkeypatch)
+
+
+# The dongles the other way round from the simulator's, so that nothing can lean on "main is #0".
+TWO_DONGLES = tuners.Lineup(tuners.Dongle(1, tuners.XTR, "Nooelec", "SMArt XTR v5", "00000001"),
+                            tuners.Dongle(0, tuners.V3, "RTLSDRBlog", "Blog V3", "00000001"))
+
+
+@pytest.fixture
+def radio2(state, monkeypatch):
+    """The GNU Radio back end on the real radio's pair: XTR (device 1) and V3 (device 0)."""
+    yield from _radio(state, monkeypatch, TWO_DONGLES)
 
 
 def open_sources() -> int:

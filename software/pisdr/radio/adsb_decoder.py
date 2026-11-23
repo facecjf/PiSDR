@@ -1,11 +1,12 @@
-"""Runs a dump1090-family decoder on the dongle and reads the aircraft list it writes.
+"""Runs a dump1090-family decoder on a dongle and reads the aircraft list it writes.
 
 Works with dump1090-fa, dump1090-mutability and readsb: all of them take ``--write-json
 <dir>`` and rewrite ``<dir>/aircraft.json`` every second. No network ports are opened. The
 folder is on a RAM disk when there is one, so the SD card is not written every second.
 
-The caller must have closed the dongle before :meth:`AdsbDecoder.start` and may reopen it
-after :meth:`AdsbDecoder.stop`.
+With two dongles the decoder is given the index of its own (the RTL-SDR Blog V3). The
+caller must not have that dongle open during :meth:`AdsbDecoder.start` and may open it
+again after :meth:`AdsbDecoder.stop`.
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from pathlib import Path
 
 from .. import config
 from ..adsb import Aircraft, parse_aircraft_json
+from . import tuners
 
 log = logging.getLogger(__name__)
 
@@ -66,13 +68,22 @@ def bias_tee_option(exe: str) -> str | None:
     return found.group(0) if found else None
 
 
+def device_option(exe: str) -> str | None:
+    """The decoder's option for choosing a dongle by index: ``--device`` or, on old ones, ``--device-index``."""
+    found = re.search(r"--device(-index)?(?=[ =<\n])", help_text(exe))
+    return found.group(0) if found else None
+
+
 def build_command(exe: str, json_dir: str, ppm: int = 0, bias_tee: bool = False,
-                  position: tuple[float, float] | None = None) -> list[str]:
-    """Command line for *exe*, using only options its ``--help`` lists."""
+                  position: tuple[float, float] | None = None, device: int | None = None) -> list[str]:
+    """Command line for *exe*, using only options its ``--help`` lists. *device* is the
+    index of the dongle to use; None leaves the decoder on its default, the first one."""
     text = help_text(exe)
     cmd = [exe]
     if "device-type" in text:
         cmd += ["--device-type", "rtlsdr"]         # has to come before the rtlsdr-specific options
+    if device is not None and device_option(exe):
+        cmd += [device_option(exe), str(int(device))]
     cmd += ["--quiet", "--write-json", json_dir, "--write-json-every", "1"]
     if ppm and "--ppm" in text:
         cmd += ["--ppm", str(int(ppm))]
@@ -106,19 +117,23 @@ class AdsbDecoder:
         return self._proc is not None and self._proc.poll() is None
 
     def start(self, ppm: int = 0, bias_tee: bool = False,
-              position: tuple[float, float] | None = None) -> str | None:
-        """Start decoding. Returns an error text, or None once the decoder holds the dongle."""
+              position: tuple[float, float] | None = None, device: int | None = None) -> str | None:
+        """Start decoding on dongle *device* (None = the first). Returns an error text, or
+        None once the decoder holds the dongle."""
         self.stop()
         exe = find_program()
         problem = problem_with(exe)
         if problem:
             return problem
         self.program = Path(exe).name
+        if device and not device_option(exe):
+            return f"{self.program} cannot be told which dongle to use - {INSTALL_HINT}"
         try:
             self._dir = Path(tempfile.mkdtemp(prefix="pisdr-adsb-", dir=_scratch_base()))
-            cmd = build_command(exe, str(self._dir), ppm, bias_tee, position)
-            if bias_tee and not bias_tee_option(exe):
-                self._bias_tee_on()
+            cmd = build_command(exe, str(self._dir), ppm, bias_tee, position, device)
+            if bias_tee and not bias_tee_option(exe) and not tuners.switch_bias_tee(device, True):
+                # The decoder has no bias-tee option and rtl_biast (which leaves it on) did not do it.
+                log.warning("bias tee is on in settings but neither %s nor rtl_biast can switch it on", self.program)
             self._log = open(self._dir / "decoder.log", "wb")
             self._proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                           stderr=self._log)
@@ -133,17 +148,6 @@ class AdsbDecoder:
         reason = self.exit_reason()
         self.stop()
         return f"{self.program} stopped: {reason}"
-
-    def _bias_tee_on(self) -> None:
-        """The decoder has no bias-tee option: switch it on with rtl_biast first (it stays on)."""
-        tool = shutil.which("rtl_biast")
-        if not tool:
-            log.warning("bias tee is on in settings but neither %s nor rtl_biast can switch it on", self.program)
-            return
-        try:
-            subprocess.run([tool, "-b", "1"], capture_output=True, timeout=5)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            log.warning("rtl_biast failed: %s", exc)
 
     def exit_reason(self) -> str:
         """The last thing the decoder said before it exited."""

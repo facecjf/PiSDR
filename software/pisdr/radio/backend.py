@@ -4,6 +4,10 @@ A backend owns the hardware centre frequency. The UI only ever talks in terms of
 frequency; the backend decides when to retune the dongle so the VFO stays inside the
 visible span and away from the DC spike. :attr:`center_changed` announces the *displayed*
 window, which is the full span at zoom x1 or a slice around the VFO when zoomed in.
+
+It also owns the choice of dongle. With two attached (see :mod:`pisdr.radio.tuners`) the
+receiver moves to whichever covers the VFO frequency, and the ADS-B decoder runs on the
+second one while the receiver carries on with the first.
 """
 from __future__ import annotations
 
@@ -16,6 +20,7 @@ from .. import config
 from ..qt import QObject, QTimer, Signal
 from ..state import RadioState
 from .decoders import Multimon
+from .tuners import Lineup, Source
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +42,8 @@ class Backend(QObject):
     #: when zoomed, recentre the view once the VFO is this far (fraction of view span) off centre
     VIEW_RECENTER_FRACTION = 0.4
 
-    def __init__(self, state: RadioState, parent: QObject | None = None) -> None:
+    def __init__(self, state: RadioState, parent: QObject | None = None,
+                 lineup: Lineup | None = None) -> None:
         super().__init__(parent)
         self.state = state
         self.span_hz = float(config.SAMPLE_RATE)
@@ -47,6 +53,13 @@ class Backend(QObject):
         self.running = False
         self.radio_down = False   # set when the dongle could not be reopened
         self._spectrum_on = True
+        self.lineup = lineup or Lineup()
+        self._aux_busy = False    # the ADS-B decoder has the second dongle
+        self._adsb_lent = False   # ... or it has the receiver's, and the receiver is paused
+        self._deaf = False        # the VFO is somewhere no attached dongle tunes
+        self.source: Source = self._route()
+        self._publish_source()
+        state.adsb_own_dongle = self.lineup.aux is not None
         self.multimon = Multimon(self)
         self.multimon.line.connect(state.append_decoder_line)
         self._adsb_timer = QTimer(self)
@@ -98,7 +111,12 @@ class Backend(QObject):
 
     # ------------------------------------------------------------------ state glue
     def _on_state_changed(self, field: str) -> None:
-        if not self.running or self.radio_down:
+        if not self.running:
+            return
+        if self.radio_down:
+            # A dongle would not open. Tuning to where the other one is used is the way out.
+            if field in ("vfo_hz", "tuner_pref") and self._route() != self.source:
+                self._switch_source(self._route())
             return
         s = self.state
         if field == "vfo_hz":
@@ -121,6 +139,8 @@ class Backend(QObject):
             self._hw_set_gain(s.gain_db, s.agc)
         elif field == "bias_tee":
             self._hw_set_bias_tee(s.bias_tee)
+        elif field == "tuner_pref":
+            self._retune_for_vfo()
         elif field == "recording":
             self._hw_set_recording(s.recording)
         elif field == "fft_fps":
@@ -141,7 +161,39 @@ class Backend(QObject):
     def vfo_offset_hz(self) -> float:
         return self.state.vfo_hz - self.center_hz
 
+    # ------------------------------------------------------------------ which dongle
+    def _route(self) -> Source:
+        """The dongle (and the way of opening it) that should receive the VFO frequency."""
+        return self.lineup.route(self.state.vfo_hz, self.state.tuner_pref, aux_free=not self._aux_busy)
+
+    def _publish_source(self) -> None:
+        self.state.set_tuner(self.source.label, self.source.dongle.spec.gain_max_db)
+
+    def _switch_source(self, source: Source) -> None:
+        """Move the receiver to another dongle, or reopen the same one the other way."""
+        self.source = source
+        self._publish_source()
+        self.status.emit(f"Tuner: {source.label}")
+        error = self._hw_select_source(source)
+        if error:
+            self.status.emit(error)
+            return
+        self._apply_all()
+
+    def _note_coverage(self) -> None:
+        """Say so, once, when the VFO goes where the dongle in use cannot follow."""
+        deaf = not self.source.covers(self.state.vfo_hz)
+        if deaf and not self._deaf:
+            busy = " (the other tuner is on ADS-B)" if self._aux_busy else ""
+            self.status.emit(f"{self.state.vfo_hz / 1e6:.3f} MHz is outside the {self.source.label} tuner's range{busy}")
+        self._deaf = deaf
+
     def _retune_for_vfo(self, force: bool = False) -> None:
+        source = self._route()
+        if source != self.source:
+            self._switch_source(source)       # ends in _apply_all, which comes back here
+            return
+        self._note_coverage()
         vfo = float(self.state.vfo_hz)
         retuned = False
         if force or abs(vfo - self.center_hz) > self.span_hz * self.RETUNE_FRACTION:
@@ -229,9 +281,11 @@ class Backend(QObject):
             self.state.set_recording(False)
         self.multimon.stop()
         self.running = False
+        self.state.set_receiver_paused(True)
 
     def _resume_receiver(self) -> None:
         self.running = True
+        self.state.set_receiver_paused(False)
         self._apply_all()
 
     def _took_back(self, error: str | None) -> str | None:
@@ -242,7 +296,7 @@ class Backend(QObject):
 
     # ------------------------------------------------------------------ network mode
     def start_network_mode(self) -> str | None:
-        """Release the dongle to rtl_tcp. Returns an error text or None."""
+        """Release the receiver's dongle to rtl_tcp. Returns an error text or None."""
         if self.state.network_mode:
             return None
         if self.state.adsb_mode:
@@ -264,16 +318,38 @@ class Backend(QObject):
 
     # ------------------------------------------------------------------ ADS-B mode
     def start_adsb_mode(self) -> str | None:
-        """Release the dongle to the ADS-B decoder. Returns an error text or None."""
+        """Start the ADS-B decoder on its dongle. Returns an error text or None.
+
+        With two dongles the receiver keeps playing on the main one. It is only paused when
+        the decoder's dongle is the one it needs: there is just one, or the VFO is where
+        only the second dongle tunes (HF).
+        """
         if self.state.adsb_mode:
             return None
         if self.state.network_mode:
             return "Leave network mode first"
-        self._pause_receiver()
+        problem = self._hw_adsb_problem()
+        if problem:
+            return problem                         # nothing to run: leave the radio alone
+        self._aux_busy = self.lineup.aux is not None
+        meanwhile = self._route()                  # where the receiver can be while the map is open
+        lent = self.source.dongle == self.lineup.adsb and (
+            meanwhile.dongle == self.lineup.adsb or not meanwhile.covers(self.state.vfo_hz))
+        if lent:
+            self._pause_receiver()
+            self._hw_release()
+        elif meanwhile != self.source:
+            self._switch_source(meanwhile)         # off the decoder's dongle, onto the main tuner
         error = self._hw_adsb(True)
         if error:
-            self._resume_receiver()
+            self._aux_busy = False
+            if lent:
+                reopen = self._hw_reopen()
+                self._resume_receiver()
+                return f"{error}; {reopen}" if reopen else error
+            self._resettle()
             return error
+        self._adsb_lent = lent
         self.state.set_aircraft([])
         self.state.set_adsb_mode(True)
         self._adsb_timer.start()
@@ -283,10 +359,28 @@ class Backend(QObject):
         if not self.state.adsb_mode:
             return None
         self._adsb_timer.stop()
-        error = self._hw_adsb(False)
+        self._hw_adsb(False)
+        self._aux_busy = False
         self.state.set_adsb_mode(False)
         self.state.set_aircraft([])
-        return self._took_back(error)
+        if self._adsb_lent:
+            self._adsb_lent = False
+            return self._took_back(self._hw_reopen())
+        self._resettle()
+        return None
+
+    def _resettle(self) -> None:
+        """The second dongle is free again: move the receiver back to it if it was moved off."""
+        if self.running and self._route() != self.source:
+            self._switch_source(self._route())
+
+    def waits_for_adsb(self, hz: float) -> bool:
+        """True if *hz* cannot be received while the ADS-B map is open but can once it is
+        closed: only the dongle the decoder is using tunes it. (The record timer asks.)"""
+        if not self._aux_busy:
+            return False
+        prefer = self.state.tuner_pref
+        return not self.lineup.route(hz, prefer, aux_free=False).covers(hz) and self.lineup.route(hz, prefer).covers(hz)
 
     def poll_adsb(self) -> None:
         """Once a second in ADS-B mode: copy the decoder's aircraft list into the state."""
@@ -315,7 +409,21 @@ class Backend(QObject):
     def _hw_set_decoder_feed(self, on: bool) -> None: ...
     def _hw_play(self, path: str | None) -> str | None: ...
     def _hw_network(self, on: bool) -> str | None: ...
-    def _hw_adsb(self, on: bool) -> str | None: ...
+
+    def _hw_select_source(self, source: Source) -> str | None:
+        """Close the dongle in use and open *source*. Returns an error text or None."""
+
+    def _hw_release(self) -> None:
+        """Close the receiver's dongle so that another program can open it."""
+
+    def _hw_reopen(self) -> str | None:
+        """Open the receiver's dongle again after :meth:`_hw_release`. Error text or None."""
+
+    def _hw_adsb_problem(self) -> str | None:
+        """Why the ADS-B decoder cannot be started at all (not installed ...), or None."""
+
+    def _hw_adsb(self, on: bool) -> str | None:
+        """Start (error text or None) or stop the ADS-B decoder on ``self.lineup.adsb``."""
 
     def _hw_adsb_poll(self) -> tuple[list, int, str]:
         """(aircraft, messages decoded so far, error text if the decoder has stopped)."""
@@ -344,8 +452,9 @@ def make_backend(state: RadioState, force_sim: bool = False) -> Backend:
     reason = "--sim requested"
     if not force_sim:
         try:
+            from . import tuners
             from .flowgraph import GnuRadioBackend  # noqa: WPS433 (import inside function on purpose)
-            backend = GnuRadioBackend(state)
+            backend = GnuRadioBackend(state, lineup=tuners.detect())
             log.info("Using GNU Radio backend")
             return backend
         except Exception as exc:  # ImportError or device open failure

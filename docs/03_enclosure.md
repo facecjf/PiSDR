@@ -33,6 +33,13 @@ larger than the coupon.**
   Antenna via an SMA bulkhead in the right wall. Power via a panel-mount USB-C extension
   and audio via a panel-mount 3.5 mm extension in the bottom wall.
 
+> **The radio now has two dongles and the enclosure in `cad/` is drawn for one.** This
+> document and the CAD describe the original single-dongle enclosure (one cradle, sized
+> for the RTL-SDR Blog V4 case, and one SMA hole) and have been left as they were. The
+> two-dongle radio is built in a newer enclosure that is not in this repository, so the
+> cradle and antenna-hole details below do not describe it; the display, Pi, key and knob
+> dimensions still apply.
+
 ## 2. Parts list (printed)
 
 | File | Part | Qty | Orientation | Approx. size | Notes |

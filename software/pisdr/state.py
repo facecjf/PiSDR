@@ -49,7 +49,7 @@ class RadioState(QObject):
     message = Signal(str)   # one-line status text for the UI
 
     PERSISTED = ("vfo_hz", "mode", "step_index", "volume", "squelch_db", "gain_db",
-                 "agc", "bias_tee", "band_index", "fft_fps", "waterfall_speed",
+                 "agc", "bias_tee", "tuner_pref", "band_index", "fft_fps", "waterfall_speed",
                  "dsp_hpf", "dsp_hpf_hz", "dsp_lpf", "dsp_lpf_hz",
                  "dsp_notch", "dsp_notch_hz", "dsp_nr_level", "dsp_nb_level", "theme",
                  "hf_panel", "wx_lat", "wx_lon", "wx_zip", "wx_units",
@@ -71,13 +71,20 @@ class RadioState(QObject):
         self.vfo_hz: int = first.default_hz
         self.mode: str = first.mode
         self.step_index: int = config.step_index_for(first.step_hz)
-        # VFO B: a second frequency / mode / step to flip to with A<>B (there is one tuner).
+        # VFO B: a second frequency / mode / step to flip to with A<>B (one receiver at a time).
         self.vfo_b: dict = {"vfo_hz": first.default_hz, "mode": first.mode, "step_hz": first.step_hz}
         self.volume: int = 60              # 0..100
         self.squelch_db: float = -100.0    # open
         self.gain_db: float = config.DEFAULT_GAIN_DB
         self.agc: bool = False
         self.bias_tee: bool = False
+        # Which dongle receives (config.TUNER_PREFS). The back end reports the one in use as
+        # `tuner` ("XTR", "V3", "V3 HF" ...) together with how far its RF gain goes.
+        self.tuner_pref: str = config.TUNER_PREFS[0]
+        self.tuner: str = ""
+        self.gain_max_db: float = config.GAIN_MAX_DB
+        self.adsb_own_dongle: bool = False    # the ADS-B decoder has a dongle to itself
+        self.receiver_paused: bool = False    # the receiver's dongle is with another program
         self.recording: bool = False
         self.knob_function: str = "TUNE"
         self.fft_fps: int = config.FFT_FPS
@@ -369,16 +376,26 @@ class RadioState(QObject):
         self._set("squelch_db", float(max(config.SQUELCH_MIN_DB, min(config.SQUELCH_MAX_DB, db))))
 
     def set_gain(self, db: float) -> None:
-        self._set("gain_db", float(max(config.GAIN_MIN_DB, min(config.GAIN_MAX_DB, db))))
+        self._set("gain_db", float(max(config.GAIN_MIN_DB, min(self.gain_max_db, db))))
         if self.agc:
             self._set("agc", False)
+
+    def cycle_tuner_pref(self, delta: int = 1) -> None:
+        self._set("tuner_pref", _cycle(config.TUNER_PREFS, self.tuner_pref, delta))
+
+    def set_tuner(self, label: str, gain_max_db: float) -> None:
+        """The back end says which dongle is receiving now and where its RF gain stops."""
+        self.gain_max_db = float(gain_max_db)
+        if self.gain_db > self.gain_max_db:
+            self._set("gain_db", self.gain_max_db)
+        self._set("tuner", str(label), persist=False)
 
     def set_agc(self, on: bool) -> None:
         self._set("agc", bool(on))
 
     def set_bias_tee(self, on: bool) -> None:
         self._set("bias_tee", bool(on))
-        self.message.emit("Bias tee ON (4.5 V on antenna port)" if on else "Bias tee off")
+        self.message.emit("Bias tee ON (4.5 V on the V3 antenna port)" if on else "Bias tee off")
 
     def set_recording(self, on: bool) -> None:
         if on and (self.playing or self.dongle_lent):
@@ -613,10 +630,14 @@ class RadioState(QObject):
     def set_network_mode(self, on: bool) -> None:
         self._set("network_mode", bool(on), persist=False)
 
+    def set_receiver_paused(self, on: bool) -> None:
+        self._set("receiver_paused", bool(on), persist=False)
+
     @property
     def dongle_lent(self) -> bool:
-        """True while another program (rtl_tcp, the ADS-B decoder) has the dongle."""
-        return self.network_mode or self.adsb_mode
+        """True while another program has the receiver's dongle: rtl_tcp, or the ADS-B
+        decoder when it has no dongle of its own (or the receiver was using that one)."""
+        return self.network_mode or self.receiver_paused
 
     # ------------------------------------------------------------------ ADS-B map
     def set_adsb_mode(self, on: bool) -> None:
@@ -910,6 +931,7 @@ class RadioState(QObject):
                             config.GAIN_MIN_DB, config.GAIN_MAX_DB, float)
         self.agc = _flag(self.agc, False)
         self.bias_tee = self.bias_tee is True   # 4.5 V on the antenna port: only if clearly asked for
+        self.tuner_pref = _choice(self.tuner_pref, config.TUNER_PREFS, config.TUNER_PREFS[0])
         self.fft_fps = _num(self.fft_fps, config.FFT_FPS, config.FFT_FPS_MIN, config.FFT_FPS_MAX)
         self.waterfall_speed = _num(self.waterfall_speed, 1, 1, config.WATERFALL_SPEED_MAX)
         self.dsp_hpf = _flag(self.dsp_hpf, True)

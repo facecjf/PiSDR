@@ -34,8 +34,10 @@ class Level:
 
 def levels(s: RadioState) -> dict[str, Level]:
     """The levels by knob function name."""
-    gain_span = config.GAIN_MAX_DB - config.GAIN_MIN_DB
     squelch_span = config.SQUELCH_MAX_DB - config.SQUELCH_MIN_DB
+
+    def gain_span() -> float:
+        return s.gain_max_db - config.GAIN_MIN_DB        # the two tuners stop at different gains
     return {
         "VOLUME": Level(
             "AF", "AF volume", "VOLUME",
@@ -45,11 +47,11 @@ def levels(s: RadioState) -> dict[str, Level]:
             frozenset({"volume"})),
         "GAIN": Level(
             "RF", "RF gain", "GAIN",
-            lambda: (s.gain_db - config.GAIN_MIN_DB) / gain_span,
+            lambda: (s.gain_db - config.GAIN_MIN_DB) / gain_span(),
             lambda: "AGC" if s.agc else f"{s.gain_db:.0f} dB",
-            lambda f: s.set_gain(round((config.GAIN_MIN_DB + f * gain_span) / config.GAIN_STEP_DB)
+            lambda f: s.set_gain(round((config.GAIN_MIN_DB + f * gain_span()) / config.GAIN_STEP_DB)
                                  * config.GAIN_STEP_DB),
-            frozenset({"gain_db", "agc"})),
+            frozenset({"gain_db", "agc", "tuner"})),
         "SQUELCH": Level(
             "SQL", "Squelch", "SQUELCH",
             lambda: (s.squelch_db - config.SQUELCH_MIN_DB) / squelch_span,

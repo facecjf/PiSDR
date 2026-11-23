@@ -159,6 +159,7 @@ class SettingsPage(Page):
         """Per tab: [left column sections, right column sections]; a section is (title, rows)."""
         s = self.state
         receiver = [
+            _Row("Tuner", self._tuner_value, self._adjust_tuner),
             _Row("Filter width", lambda: f"{s.filter_hz / 1000:g} kHz {s.mode}", lambda d: s.step_filter(d or 1)),
             _Row("Tuner AGC", lambda: _onoff(s.agc), lambda d: s.set_agc(not s.agc)),
             _Row("RF gain", lambda: f"{s.gain_db:.0f} dB" + (" (AGC)" if s.agc else ""),
@@ -260,6 +261,30 @@ class SettingsPage(Page):
         ]
 
     # ------------------------------------------------------------------ value helpers
+    def _tuner_names(self) -> dict[str, str]:
+        """What each ``config.TUNER_PREFS`` entry is called on this radio."""
+        lineup = self.backend.lineup if self.backend is not None else None
+        if lineup is None or lineup.aux is None:
+            return {}
+        return {"AUTO": "AUTO", "MAIN": f"{lineup.main.spec.key} only", "AUX": f"{lineup.aux.spec.key} only"}
+
+    def _tuner_value(self) -> str:
+        s = self.state
+        names = self._tuner_names()
+        if not names:
+            return s.tuner or "RTL"
+        if s.tuner_pref == "AUTO":
+            return f"AUTO \u00b7 {s.tuner}"
+        wanted = self.backend.lineup.named(s.tuner_pref).spec.key
+        # On the other one after all: the ADS-B map has the dongle that was asked for.
+        return names[s.tuner_pref] if s.tuner.startswith(wanted) else f"{names[s.tuner_pref]} \u00b7 {s.tuner}"
+
+    def _adjust_tuner(self, d: int) -> None:
+        if self._tuner_names():
+            self.state.cycle_tuner_pref(d or 1)
+        else:
+            self.state.message.emit("Only one tuner is attached")
+
     def _rds_value(self) -> str:
         if self.backend is not None and not self.backend.rds_available:
             return "not installed"
@@ -383,14 +408,17 @@ class SettingsPage(Page):
     def _refresh_info(self) -> None:
         dim = style.TEXT_DIM
         backend = type(self.backend).__name__ if self.backend is not None else "?"
-        backend = {"GnuRadioBackend": "GNU Radio + RTL-SDR", "SimBackend": "Simulator"}.get(backend, backend)
+        backend = {"GnuRadioBackend": "GNU Radio", "SimBackend": "Simulator"}.get(backend, backend)
         bl = self.backlight
         if backend != "Simulator" and self.backend is not None and self.backend.rds_available:
             rds = "in use"
         else:
             rds = "installed" if sysinfo.have_module("rds") else "not installed"
+        lineup = self.backend.lineup if self.backend is not None else None
+        tuners = " + ".join(d.spec.key for d in lineup.dongles) if lineup is not None else "?"
         lines = [
             ("Radio", backend),
+            ("Tuners", tuners + (" (simulated)" if backend == "Simulator" else "")),
             ("IP address", f"{sysinfo.lan_address()} ({sysinfo.hostname()})"),
             ("rtl_tcp", "installed" if sysinfo.have_tool("rtl_tcp") else "missing (rtl-sdr)"),
             ("multimon-ng", "installed" if sysinfo.have_tool("multimon-ng") else "missing"),

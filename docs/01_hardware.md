@@ -5,16 +5,17 @@
 | # | Part | Qty | Notes |
 |---|---|---|---|
 | 1 | Raspberry Pi 4 Model B | 1 | 2 GB is enough. 85 x 56 mm, holes 58 x 49 mm on 3.5 mm insets |
-| 2 | Power supply 5.1 V / 3 A USB-C (official Pi 4 PSU) | 1 | Cheaper supplies sag under the Pi + screen + SDR load |
+| 2 | Power supply 5.1 V / 3 A USB-C (official Pi 4 PSU) | 1 | Cheaper supplies sag under the Pi + screen + two SDRs |
 | 3 | microSD 16 GB or larger, A1/A2 class | 1 | |
-| 4 | RTL-SDR Blog V4 | 1 | R828D tuner, 1 ppm TCXO, SMA female, 4.5 V software bias tee. Aluminium case about 70 x 27 x 12 mm (**measure yours**) |
-| 5 | USB-A male to USB-A female extension, 15-30 cm, shielded, with ferrite | 1 | Keeps the V4 off the Pi's USB stack and away from the display driver |
+| 4 | Nooelec NESDR SMArt XTR | 1 | **Main tuner.** Elonics E4000, about 65-2300 MHz with a gap around 1100-1250 MHz, 0.5 ppm TCXO, SMA female, no bias tee. Aluminium case (**measure yours**) |
+| 4a | RTL-SDR Blog V3 | 1 | **ADS-B on 1090 MHz, and HF.** R820T2 tuner 24-1766 MHz, 500 kHz-24 MHz by direct sampling, 1 ppm TCXO, SMA female, 4.5 V software bias tee. Aluminium case about 70 x 27 x 12 mm (**measure yours**) |
+| 5 | USB-A male to USB-A female extension, 15-30 cm, shielded, with ferrite | 2 | One per dongle. Keeps them off the Pi's USB stack, away from the display driver and apart from each other (side by side in the Pi's ports they do not fit, and they heat each other) |
 | 6 | Hosyond 7" IPS capacitive DSI touchscreen 800x480 (Amazon B0D3QB7X4Z) | 1 | Module 164.89 x 102.00 x 12.25 mm, active area 154.68 x 87.02 mm, 5 V 510 mA max |
 | 7 | EC11 rotary encoder module, 5 pins (GND, +, SW, DT, CLK) | 1 | Also sold as "KY-040". PCB about 32 x 19 mm, 20-step, D-shaft or knurled 6 mm shaft (**measure**) |
 | 8 | Tactile switch 12 x 12 x 7.3 mm, 4 pins | 4 | Round plunger about 3.5 mm diameter. If yours really are SMD, solder short wire leads to them |
 | 9 | Perfboard, 2.54 mm pitch, about 20 x 160 mm strip | 1 | Carrier for the four keys; cut from a 7 x 9 cm board |
-| 10 | SMA female-to-female bulkhead adapter | 1 | Panel hole 6.5 mm, D-flat optional |
-| 11 | SMA male to SMA male pigtail, RG316, 10-15 cm | 1 | Bulkhead to V4 |
+| 10 | SMA female-to-female bulkhead adapter | 2 | One per dongle. Panel hole 6.5 mm, D-flat optional. The enclosure in `cad/` has one hole: see doc 03 |
+| 11 | SMA male to SMA male pigtail, RG316, 10-15 cm | 2 | Bulkhead to dongle |
 | 12 | M3 heat-set inserts (OD 4.0-4.6 mm, length 4-5 mm) | 4 | Rear shell to faceplate |
 | 13 | M3 x 10 countersunk screws | 4 | |
 | 14 | M2.5 x 12 pan-head screws | 2 | Perfboard + carrier to the faceplate (self-tapping into plastic) |
@@ -114,30 +115,61 @@ line up under the four cells of the on-screen soft-key bar.
 The display's I2C touch controller uses the dedicated DSI/I2C0 lines, not the header;
 GPIO2/3 stay free. Pins 31-40 remain available for a fan tach/PWM or future keys.
 
-## 4. RTL-SDR V4 placement and antenna input
+## 4. The two dongles: jobs, placement and antenna inputs
 
-- Mount the V4 in the printed cradle in the knob column, as far from the display's
-  driver board and the Pi's SoC as the box allows. Connect it through the USB extension
-  with its ferrite close to the dongle.
-- Fit the SMA bulkhead in the right-hand wall; connect the bulkhead to the V4 with the
-  short pigtail. The user connects their antenna to the bulkhead, never to the dongle.
-- **Bias tee stays OFF** (default in the app) unless you know the antenna needs 4.5 V.
-  A passive wire, 9:1 unun or a magnetic loop with its own supply must not see bias.
-- The V4 tunes 500 kHz to about 1.766 GHz without direct sampling. Leave "direct
-  sampling" and any "LO offset" settings alone; those are for other dongles.
+| | NESDR SMArt XTR | RTL-SDR Blog V3 |
+|---|---|---|
+| Job | main tuner: listening and scanning | ADS-B on 1090 MHz; HF and the other frequencies the XTR lacks |
+| Tuner chip | Elonics E4000 | Rafael Micro R820T2 |
+| Tuner range | about 65-2300 MHz, gap around 1100-1250 MHz | 24-1766 MHz |
+| Below 24 MHz | nothing | 500 kHz-24 MHz by direct sampling (Q branch) |
+| RF gain | 0-42 dB | 0-49.6 dB (no effect in direct sampling) |
+| Bias tee | none | 4.5 V, switched in software |
+| Antenna | the general-coverage VHF/UHF antenna | the 1090 MHz antenna; an HF antenna when it is used for HF |
+
+- The application tells the two apart by their tuner chips and decides which one receives
+  from the frequency (doc 02 section 5g). **Which USB port each is in does not matter.**
+- The E4000's range is nominal and varies a little from unit to unit; the edges of the gap
+  in particular. `XTR_RANGES_HZ` in `software/pisdr/config.py` holds the numbers the
+  application goes by. If yours tunes 1100-1250 MHz anyway, or goes deaf before 1100 MHz,
+  change them there.
+- **The V3's one antenna socket serves both of its jobs.** A 1090 MHz antenna hears next to
+  nothing on HF and an HF wire is a poor ADS-B antenna, so decide what stays connected:
+  with the ADS-B antenna on it, HF through the V3 is for strong broadcast stations only.
+  A diplexer (HF / UHF) into the one socket lets both antennas stay connected.
+- Direct sampling has no tuner in front of the ADC: there is no RF gain control, strong
+  medium-wave stations can overload it, and above 14.4 MHz signals from 28.8 MHz minus the
+  frequency fold in on top (the V3 has no filter for that). It is good enough for
+  broadcast, WWV and the stronger amateur signals; an upconverter or a Blog V4 in the V3's
+  place does HF properly, and the application uses a V4 without direct sampling if it
+  finds one.
+- Mount the dongles away from the display's driver board and the Pi's SoC, each on its own
+  USB extension with the ferrite close to the dongle. The enclosure in `cad/` is the
+  earlier single-dongle one (one cradle, one SMA hole); see the note in doc 03.
+- Each dongle gets its own SMA bulkhead and pigtail. The user connects antennas to the
+  bulkheads, never to the dongles.
+- **Bias tee stays OFF** (default in the app) unless you know the antenna on the **V3**
+  needs 4.5 V, for example a 1090 MHz antenna with a built-in amplifier. A passive wire,
+  9:1 unun or a magnetic loop with its own supply must not see bias. The XTR has none; the
+  setting never puts voltage on its socket.
 
 ## 5. Power budget
 
 | Load | Typical | Peak |
 |---|---|---|
-| Raspberry Pi 4 (GNU Radio running, 2 cores busy) | 0.9 A | 1.3 A |
+| Raspberry Pi 4 (GNU Radio running, 2 cores busy; `dump1090` adds part of a third) | 0.9 A | 1.4 A |
 | Hosyond display at full brightness | 0.4 A | 0.51 A |
-| RTL-SDR V4 | 0.28 A | 0.33 A |
+| NESDR SMArt XTR | 0.3 A | 0.35 A |
+| RTL-SDR Blog V3 (plus whatever the bias tee feeds, up to 0.18 A) | 0.28 A | 0.5 A |
 | Encoder module, keys | < 0.01 A | |
 | Optional 5 V fan | 0.08 A | 0.15 A |
-| **Total** | **1.7 A** | **2.3 A** |
+| **Total** | **2.0 A** | **2.9 A** |
 
-A 3 A supply has margin. If the Pi logs "Undervoltage detected", suspect the cable before
+The dongle currents are typical figures for these parts, not measurements of yours. A 3 A
+supply still covers it, but with little to spare: both dongles are powered whenever the Pi
+is, whether or not they are receiving. The Pi 4's four USB ports share 1.2 A; two dongles
+are inside that, two dongles plus a USB sound card with a speaker amplifier may not be, and
+then a powered hub is the answer. If the Pi logs "Undervoltage detected", suspect the cable before
 the supply: use the cable that came with the PSU or a cable rated 3 A with 20 AWG power
 conductors.
 
@@ -152,8 +184,9 @@ conductors.
 ## 7. RFI notes - read before you are disappointed by HF reception
 
 - The Hosyond display driver board and the Pi's HDMI/USB3 circuitry radiate broadband
-  noise. A 3D-printed enclosure is RF-transparent, so inside the box the V4 and its
-  pigtail sit in that noise field.
+  noise. A 3D-printed enclosure is RF-transparent, so inside the box the dongles and
+  their pigtails sit in that noise field. HF through the V3's direct sampling input is the
+  most exposed to it.
 - Mitigations, in order of effectiveness:
   1. Keep the antenna outdoors or at least several metres from the box.
   2. Use the shielded USB extension and the shielded pigtail; keep both short.
@@ -163,7 +196,7 @@ conductors.
      and the CAD leaves 0.3 mm of clearance for it.
   4. Lower the display brightness when listening to weak HF signals; the backlight
      boost converter is often the loudest source.
-  5. If the noise is still unacceptable on HF, mount the V4 externally in its own shielded
+  5. If the noise is still unacceptable on HF, mount the V3 externally in its own shielded
      box at the antenna feedpoint and run only USB into the enclosure.
 
 ## 8. Dimensions that drive the CAD (reference)
@@ -178,5 +211,5 @@ conductors.
 | Standoff (display to Pi PCB) | 4.0 mm | supplied 4+4 mm copper pillar |
 | EC11 module PCB | ~32 x 19 x 1.6 mm, shaft 6 mm, 15 mm long | **measure** |
 | 12 mm tactile switch | 12.0 x 12.0 x 7.3 mm, plunger ~3.5 mm dia | **measure** |
-| RTL-SDR V4 case | ~70 x 27 x 12 mm | **measure** |
+| RTL-SDR dongle case in the CAD (`v4_size`, the single-dongle enclosure) | ~70 x 27 x 12 mm | **measure** |
 | SMA bulkhead | 6.5 mm hole, 8 mm nut flats | **measure** |

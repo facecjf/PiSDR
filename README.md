@@ -1,20 +1,40 @@
-# PiSDR - a touch-first receiver built from a Raspberry Pi 4 and an RTL-SDR Blog V4
+# PiSDR - a touch-first receiver built from a Raspberry Pi 4 and two RTL-SDR dongles
 
-A self-contained SDR receiver: Raspberry Pi 4, RTL-SDR Blog V4, Hosyond 7" 800x480 DSI
+A self-contained SDR receiver: Raspberry Pi 4, a Nooelec NESDR SMArt XTR as the main tuner,
+an RTL-SDR Blog V3 for ADS-B and HF, Hosyond 7" 800x480 DSI
 touchscreen, one EC11 rotary encoder module and four 12 mm tactile keys, in a 3D-printed
 enclosure. The receiver application is written for this exact screen and control set
 (GNU Radio backend, PyQt/pyqtgraph front end), so the knob and keys do what a radio
 owner expects rather than driving a desktop program through a remote-control socket.
+
+## The two tuners
+
+| | Nooelec NESDR SMArt XTR | RTL-SDR Blog V3 |
+|---|---|---|
+| Job | **Main tuner**: what you listen to and scan | **ADS-B** on 1090 MHz, and whatever the XTR cannot tune |
+| Tuner chip | Elonics E4000 | Rafael Micro R820T2 |
+| Receives | about 65 - 2300 MHz, with a gap around 1100 - 1250 MHz | 24 - 1766 MHz, and 500 kHz - 24 MHz by direct sampling |
+| Bias tee | no | yes, 4.5 V |
+| On screen | `XTR` | `V3`, or `V3 HF` in direct sampling |
+
+The application picks the dongle from the frequency: the XTR wherever it tunes, the V3 for
+HF, 24 - 65 MHz (CB, 10 m, 6 m) and the XTR's gap. The one in use is shown on the VFO bar
+beside the band, and Settings → RADIO → **Tuner** can hold the receiver to one of them.
+Opening the ADS-B map starts `dump1090` on the V3 and the receiver **keeps playing** on the
+XTR. Only one dongle feeds the receiver at a time, so the map and HF listening cannot run
+together: from an HF band the receiver pauses while the map is open. With a single dongle
+attached (either of these, or a Blog V4) everything still works the way it did with one.
+Details in `docs/02_software_setup.md` section 5g.
 
 ## What is in this repository
 
 | Path | Contents |
 |---|---|
 | `docs/01_hardware.md` | Bill of materials, verified dimensions, wiring and GPIO map, power budget, RFI notes |
-| `docs/02_software_setup.md` | Raspberry Pi OS setup, RTL-SDR V4 driver verification, installing and auto-starting the app |
+| `docs/02_software_setup.md` | Raspberry Pi OS setup, RTL-SDR driver verification for both dongles, installing and auto-starting the app |
 | `docs/03_enclosure.md` | Dimensioned spec sheet for the enclosure and the **fit sheet** to fill in before printing |
 | `docs/04_assembly_and_test.md` | Bench test -> test coupon -> full print -> assembly -> thermal/reception test |
-| `docs/05_backlog.md` | What has been added and what is next (multi-band with a second tuner, hardware add-ons) |
+| `docs/05_backlog.md` | What has been added and what is next (using both tuners at once, hardware add-ons) |
 | `software/pisdr/` | The receiver application (`python3 -m pisdr`) |
 | `software/config/bands.json` | Editable band / preset table |
 | `software/config/outlines.npz` | Coastlines, lakes and borders for the ADS-B map (Natural Earth, public domain; rebuilt by `software/tools/build_outlines.py`) |
@@ -37,7 +57,7 @@ the parts actually in hand:
   and to be powered through pogo pins. The display plus Pi is one rigid ~35 mm stack and
   the enclosure has to be designed around that stack, not around a loose Pi.
 - The software plan was a leftover from an HF-only upconverter design: tuning clamped to
-  0.5-30 MHz (the V4 covers 500 kHz to 1.7 GHz on its own), a new TCP connection to Gqrx
+  0.5-30 MHz (the dongles cover 500 kHz to 2.3 GHz between them), a new TCP connection to Gqrx
   for every encoder click, and an encoder push that merely duplicated the STEP key.
 
 This version is **measure-first**: every dimension that depends on your physical parts is a
@@ -50,11 +70,15 @@ the first full print.
 Full table with notes in `docs/01_hardware.md`.
 
 - Raspberry Pi 4 Model B (2 GB or more), 5.1 V / 3 A USB-C supply, microSD 16 GB+
-- RTL-SDR Blog V4 (R828D, 1 ppm TCXO, SMA) and a 15-30 cm USB-A male-to-female extension
+- Nooelec NESDR SMArt XTR (E4000, 0.5 ppm TCXO, SMA): the main tuner
+- RTL-SDR Blog V3 (R820T2, 1 ppm TCXO, SMA, bias tee): ADS-B and HF
+- 2 x 15-30 cm USB-A male-to-female extensions, one per dongle
 - Hosyond 7" IPS capacitive DSI touchscreen, 800x480 (B0D3QB7X4Z) with its standoffs and FFC
 - EC11 rotary encoder **module** (5 pins: GND, +, SW, DT, CLK)
 - 4 x 12 x 12 x 7.3 mm tactile switches, small piece of perfboard, hook-up wire, Dupont connectors
-- SMA female-female bulkhead adapter and a short SMA male-male pigtail
+- SMA female-female bulkhead adapter and a short SMA male-male pigtail, one set per dongle
+  (the enclosure in `cad/` is the earlier one, with a cradle and an antenna hole for one
+  dongle: see the note in `docs/03_enclosure.md`)
 - Panel-mount USB-C extension (power) and panel-mount 3.5 mm extension (audio)
 - 4 x M3 heat-set inserts and M3 x 10 countersunk screws; 2 x M2.5 x 12 screws for the key board
 - Optional: copper or aluminium foil tape for an RF lining, a small 5 V fan, powered speaker or headphones
@@ -82,8 +106,8 @@ HF conditions numbers and the aircraft in them are sample values.
 |   800 x 480 touchscreen                                    |  (( ))  |  <- EC11 knob
 |   VFO bar: status line, VFO A / B, meter, MENU and HIDE    |  TUNE   |
 |   spectrum + waterfall, tap a signal to tune it            |         |
-|   sliders: AF volume, RF gain, squelch                     |  RTL-SDR|
-|  [ BAND  ] [ MODE  ] [ KNOB  ] [FNC 1/3]  <- toolbar       |   V4    |
+|   sliders: AF volume, RF gain, squelch                     |  dongle |
+|  [ BAND  ] [ MODE  ] [ KNOB  ] [FNC 1/3]  <- toolbar       |  cradle |
 +------------------------------------------------------------+         |
 |     [K1]       [K2]       [K3]       [K4]   <- 4 tactile keys        |
 +----------------------------------------------------------------------+
@@ -91,7 +115,7 @@ HF conditions numbers and the aircraft in them are sample values.
 
 - The main screen is laid out like [piHPSDR](https://github.com/dl1ycf/pihpsdr): a **VFO
   bar** across the top (a status line with the mode, filter width and what is switched on,
-  the VFO A dial with VFO B beside it, and a line with band, step, zoom and levels), the
+  the VFO A dial with VFO B beside it, and a line with band, tuner, step, zoom and levels), the
   **meter** (S-units and dB, with the clock above it), **MENU** and **HIDE** buttons, the
   panadapter and waterfall, a **sliders** area and the **toolbar**. Lit indicators are on,
   grey ones are off; tap one to go to its setting.
@@ -131,19 +155,20 @@ HF conditions numbers and the aircraft in them are sample values.
   a sortable flight list.
   The map takes the room of the soft-key bar and has its own buttons; the four keys still
   act as `ZOOM − / ZOOM + / LIST / BACK`, the knob selects an aircraft.
-  The dongle is lent to `dump1090` while the map is open (see `docs/02_software_setup.md`
-  section 5f).
+  `dump1090` runs on the V3 while the map is open and the receiver carries on with the XTR;
+  the band picker's ADS-B tile therefore does not retune the receiver (see
+  `docs/02_software_setup.md` section 5f).
 - Encoder push cycles the tuning step (10 Hz ... 1 MHz), and so does a tap on a digit of the
   dial; holding the knob or the dial opens the keypad. Long-press `KNOB` (or `MENU`) opens
-  Settings, in five tabs: RADIO (filter widths, PPM, S-meter cal, CW pitch, decoders), AUDIO (DSP,
+  Settings, in five tabs: RADIO (tuner, filter widths, PPM, S-meter cal, CW pitch, decoders), AUDIO (DSP,
   recordings browser, record timer), DISPLAY (themes, brightness/dimming, UTC clock, knob
   acceleration, spectrum zoom/averaging/peak hold/style/colours/labels), SCAN (timing, priority, lockouts, log)
   and SYSTEM (presets, rtl_tcp network mode, ADS-B map, your location by ZIP code, shutdown).
 
 ## Build order
 
-1. Read `docs/01_hardware.md` and `docs/02_software_setup.md`; get the Pi, screen and V4
-   working on the bench with the application running (no enclosure yet).
+1. Read `docs/01_hardware.md` and `docs/02_software_setup.md`; get the Pi, screen and both
+   dongles working on the bench with the application running (no enclosure yet).
 2. Wire the encoder and keys, confirm every control in the app.
 3. Fill in the fit sheet in `docs/03_enclosure.md`, update `cad/pisdr_params.scad`,
    print the test coupon, then the full enclosure.
@@ -152,7 +177,7 @@ HF conditions numbers and the aircraft in them are sample values.
 ## Developing on a PC
 
 The UI runs on Windows, macOS or Linux without any radio hardware using a simulated
-backend:
+backend, which pretends to be the same pair of dongles (an XTR and a V3):
 
 ```powershell
 cd software
@@ -161,7 +186,8 @@ python -m pisdr --sim --windowed
 ```
 
 On the Pi the real GNU Radio backend is selected automatically when `gnuradio` is
-importable and an RTL-SDR is attached.
+importable and an RTL-SDR is attached. Which dongle is which is read from their tuner
+chips at start-up; nothing has to be configured.
 
 ### Tests
 
@@ -170,16 +196,17 @@ cd software
 python -m pytest
 ```
 
-About 480 tests in about a minute, with no radio, display or network. They cover the
+About 540 tests in under a minute and a half, with no radio, display or network. They cover the
 settings and memory files (including damaged ones), tuning, scanning, the record timer,
-signal detection, the Morse decoder, the ADS-B map, the ZIP code table, and every page of the UI including a few
+signal detection, the Morse decoder, which dongle tunes what and how they are shared with
+the ADS-B decoder, the ADS-B map, the ZIP code table, and every page of the UI including a few
 thousand random key presses, knob turns and taps. The real flowgraph code in
 `pisdr/radio/flowgraph.py` is exercised against a stand-in for GNU Radio
 (`tests/fakegr.py`) that records which blocks are connected to which; this checks the
 wiring and the order of operations, not the signal processing. The ADS-B tests use a shell
 script in place of `dump1090`; if a real one is installed (or `PISDR_TEST_DUMP1090` names
 one) a further test feeds it a synthetic recording and checks the decoded positions.
-Nothing here replaces trying a change on the Pi with the dongle attached:
+Nothing here replaces trying a change on the Pi with the dongles attached:
 `python3 -m pisdr --check` there.
 
 ### Screenshots

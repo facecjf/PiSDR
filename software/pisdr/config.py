@@ -43,12 +43,26 @@ KEY_HOLD_S = 0.8         # long press threshold
 SAMPLE_RATE = 1_920_000      # RTL-SDR sample rate; 1.92 MS/s divides cleanly to 240 k and 48 k
 IF_RATE = 240_000            # after the translating filter (SAMPLE_RATE / 8)
 AUDIO_RATE = 48_000          # IF_RATE / 5
-FREQ_MIN = 500_000           # RTL-SDR Blog V4 lower limit without direct sampling
-FREQ_MAX = 1_766_000_000
+FREQ_MIN = 500_000           # bottom of the V3's direct-sampling range
+FREQ_MAX = 2_300_000_000     # top of the XTR's E4000
 DEFAULT_GAIN_DB = 30.0
 GAIN_MIN_DB = 0.0
-GAIN_MAX_DB = 49.6           # R828D range reported by librtlsdr
+GAIN_MAX_DB = 49.6           # R820T2 range reported by librtlsdr (the E4000 stops at 42 dB)
 GAIN_STEP_DB = 1.0
+
+# Tuners. The receiver has two dongles: a Nooelec NESDR SMArt XTR (E4000 tuner), which is
+# the main tuner, and an RTL-SDR Blog V3 (R820T2), which decodes ADS-B on 1090 MHz and
+# receives what the E4000 cannot: HF by direct sampling, 24-65 MHz and the E4000's gap.
+# Which dongle is which is read from its tuner chip (radio/tuners.py). To force it, give a
+# serial number or a device index here, or in PISDR_MAIN_TUNER / PISDR_ADSB_TUNER.
+MAIN_TUNER = os.environ.get("PISDR_MAIN_TUNER", "")
+ADSB_TUNER = os.environ.get("PISDR_ADSB_TUNER", "")
+XTR_RANGES_HZ = ((65_000_000, 1_100_000_000), (1_250_000_000, 2_300_000_000))   # the gap varies a little per unit
+XTR_GAIN_MAX_DB = 42.0
+V3_RANGE_HZ = (24_000_000, 1_766_000_000)
+V3_DIRECT_RANGE_HZ = (500_000, 24_000_000)   # direct sampling on the Q branch, tuner bypassed
+V4_RANGE_HZ = (500_000, 1_766_000_000)       # a Blog V4 still works: its upconverter covers HF
+TUNER_PREFS = ("AUTO", "MAIN", "AUX")        # AUTO = whichever covers the frequency, main tuner first
 SQUELCH_MIN_DB = -100.0
 SQUELCH_MAX_DB = -20.0
 SQUELCH_STEP_DB = 1.0
@@ -60,8 +74,7 @@ WATERFALL_ROWS = 170
 WATERFALL_SPEED_MAX = 4      # rows added per frame
 SPECTRUM_UI_MS = 50          # coalesce GUI redraws (~20 fps max), drop intermediate frames
 FUNC_RETURN_S = 4.0          # knob returns to TUNE after this many idle seconds
-RTL_DEVICE_ARGS = "rtl=0"    # append ",bias=1" for the bias tee (handled in the backend)
-PPM_CORRECTION = 0           # default for Settings > RADIO > PPM; the V4 TCXO is ~1 ppm
+PPM_CORRECTION = 0           # default for Settings > RADIO > PPM; both dongles have a TCXO (0.5-1 ppm)
 PPM_MIN, PPM_MAX = -100, 100
 SMETER_CAL_DB = -60.0        # default offset from IF power (dBFS) to the S-meter reading
 SMETER_CAL_MIN_DB, SMETER_CAL_MAX_DB = -100.0, -20.0
@@ -142,11 +155,12 @@ DECODERS: dict[str, tuple[str, ...]] = {
 DECODER_RATE = 22_050
 DECODER_TEXT_MAX = 40        # decoded lines kept for the strip on the main page
 
-# Network mode: hand the dongle to rtl_tcp so SDR++ / SDR# / GQRX can use it over Wi-Fi.
+# Network mode: hand the receiver's dongle to rtl_tcp so SDR++ / SDR# / GQRX can use it over Wi-Fi.
 RTL_TCP_PORT = 1234
 
-# ADS-B map: the dongle is lent to a dump1090-family decoder, which writes the aircraft it
-# is tracking to aircraft.json once a second. First program found on PATH is used.
+# ADS-B map: a dump1090-family decoder runs on the V3 (or borrows the only dongle there is)
+# and writes the aircraft it is tracking to aircraft.json once a second. First program
+# found on PATH is used.
 ADSB_FREQ_HZ = 1_090_000_000
 ADSB_PROGRAMS = ("dump1090-fa", "dump1090-mutability", "readsb", "dump1090")
 ADSB_POLL_MS = 1000

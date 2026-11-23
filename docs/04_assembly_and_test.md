@@ -7,9 +7,14 @@ is printed before the enclosure.
 
 1. Mount the Pi on the display standoffs, 5 cm FFC, pogo pins aligned. Power up, confirm
    picture and touch (doc 02 section 1).
-2. Plug the V4 into the Pi via the USB extension. `rtl_test -t` must say "V4 Detected".
+2. Plug both dongles into the Pi, each on its own USB extension. `rtl_test -t` must list
+   two devices, and `python3 -m pisdr --check` (after step 3) must name the NESDR SMArt XTR
+   as the main tuner and the RTL-SDR Blog V3 for ADS-B and HF (doc 02 section 2).
 3. Install the app (doc 02 sections 3-4). Run `python3 -m pisdr --windowed`. You should see
-   a live spectrum. Tune to a local FM station (BAND -> FM bcast) and hear audio.
+   a live spectrum. Tune to a local FM station (BAND -> FM bcast) and hear audio; the
+   line under the frequency should read `XTR`. Pick an HF band (BAND -> 40 m): it should
+   change to `V3 HF` after about a second. Then BAND -> FM bcast again, BAND -> ADS-B 1090:
+   the aircraft map opens and the FM station keeps playing.
 4. Run the headless check as well, it isolates the radio from the UI:
    `python3 -m pisdr.radio.flowgraph --freq 100.1e6 --mode WFM --seconds 15`.
 5. Wire the EC11 module and the four keys on a breadboard first (doc 01 section 3). Run
@@ -21,8 +26,8 @@ is printed before the enclosure.
 6. Leave it running for 30 minutes. `vcgencmd measure_temp` should stay below 70 C in the
    open; if not, fix cooling (heat sink on the SoC) before the enclosure makes it worse.
 
-Pass criteria: audio, spectrum, every control and `rtl_test` all behave, no undervoltage
-warnings in `dmesg`.
+Pass criteria: audio, spectrum, every control, both dongles and `rtl_test` all behave, no
+undervoltage warnings in `dmesg` (two dongles draw about 0.3 A more than one did).
 
 ## Stage 2 - Measure and print
 
@@ -72,11 +77,13 @@ about 230 C. Keep them square; the back-wall screws must find them.
    Pi connector. Check from the front that the picture edges will not be hidden by the lip
    (power it briefly if in doubt).
 3. Plug in all Dupont leads at the GPIO header (doc 01 section 3 table). Dress the wires
-   along the key row and knob column, away from the V4.
+   along the key row and knob column, away from the dongle.
 4. Fit the SMA bulkhead to the right wall, the USB-C and 3.5 mm panel connectors to the
-   bottom wall, and plug their tails into the Pi. Plug the USB extension into a Pi USB 2.0
-   port (the black ones; the blue USB 3.0 ports generate more interference).
-5. Zip-tie the V4 into its cradle, SMA end towards the bottom. Connect the pigtail.
+   bottom wall, and plug their tails into the Pi. Plug the USB extensions into the Pi's USB 2.0
+   ports (the black ones; the blue USB 3.0 ports generate more interference).
+5. Fix each dongle in its place, SMA end towards its bulkhead, and connect the pigtails.
+   (The shell in `cad/` has a zip-tie cradle for one dongle only; see the note in doc 03
+   section 1.)
 6. Optional foil lining now (doc 03 section 8).
 7. Lower the rear shell over the faceplate; the alignment rim guides it. The four display
    posts should just touch the module's rear. Their length is derived from `display_t`: if
@@ -93,7 +100,8 @@ about 230 C. Keep them square; the back-wall screws must find them.
 | Every key lines up under its label; knob turns freely, no rub on the faceplate | yes |
 | 30 min on FM broadcast with the display at full brightness: `vcgencmd measure_temp` | < 75 C |
 | Shell above the Pi after 30 min | warm, not hot (< 50 C) |
-| HF reception (40 m, 20 m) with the real antenna vs. the V4 on a bare laptop | noise floor within ~6 dB |
+| FM broadcast on the XTR with the ADS-B map open for 30 min (both dongles and `dump1090` working): `vcgencmd measure_temp`, and no audio drop-outs | < 75 C |
+| HF reception (40 m, 20 m) with an HF antenna on the V3 vs. the V3 on a bare laptop | noise floor within ~6 dB |
 | Recording (K4) produces a playable WAV in `~/Recordings` | yes |
 
 If HF noise is much worse enclosed than bare, go through doc 01 section 7 in order: the

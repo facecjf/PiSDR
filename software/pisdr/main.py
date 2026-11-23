@@ -53,8 +53,29 @@ def check_radio() -> int:
             raise RuntimeError("no RTL-SDR found on USB (plugged in? `lsusb` shows 0bda:2838?)")
         if "usb_claim_interface" in text:
             raise RuntimeError("dongle held by the DVB kernel driver - blacklist it and reboot (doc 02 s.2)")
-        v4 = "V4" in text
-        return "RTL-SDR Blog V4 detected" if v4 else "RTL-SDR found but NOT reported as V4 - librtlsdr too old (doc 02 s.2)"
+        return "librtlsdr can open a dongle"
+
+    lineup = None
+
+    def find_tuners():
+        nonlocal lineup
+        from .radio import tuners
+        found = tuners.scan()
+        lineup = tuners.assign(found)
+        if not found:
+            raise RuntimeError("librtlsdr lists no RTL-SDR")
+        for dongle in found:
+            print(f"\n    {dongle.describe()}", end="")
+        print("\n    ", end="")
+        if lineup.aux is None:
+            return (f"one dongle: {lineup.main.spec.name} does everything, and the receiver "
+                    "pauses while the ADS-B map is open")
+        unknown = [d for d in lineup.dongles if d.spec is tuners.GENERIC]
+        if unknown:
+            raise RuntimeError(f"cannot tell what dongle #{unknown[0].index} is (its tuner chip could not be "
+                               "read - is another program using it?). Set PISDR_MAIN_TUNER / PISDR_ADSB_TUNER "
+                               "to serial numbers if this persists (doc 02 s.2)")
+        return f"main tuner {lineup.main.spec.key} (#{lineup.main.index}), ADS-B and HF {lineup.aux.spec.key} (#{lineup.aux.index})"
 
     def import_gr():
         from gnuradio import gr
@@ -65,10 +86,18 @@ def check_radio() -> int:
         return f"gr-osmosdr importable from {osmosdr.__file__}"
 
     def open_source():
+        import gc
         import osmosdr
-        src = osmosdr.source(args=f"numchan=1 {config.RTL_DEVICE_ARGS}")
-        src.set_sample_rate(config.SAMPLE_RATE)
-        return f"device opened, rate {src.get_sample_rate():.0f}, gains {src.get_gain_range().to_pp_string()}"
+        from .radio import tuners
+        opened = []
+        for dongle in (lineup or tuners.Lineup()).dongles:
+            src = osmosdr.source(args=f"numchan=1 {tuners.Source(dongle).device_args()}")
+            src.set_sample_rate(config.SAMPLE_RATE)
+            opened.append(f"{dongle.spec.key} rate {src.get_sample_rate():.0f}, "
+                          f"gains {src.get_gain_range().to_pp_string()}")
+            del src
+            gc.collect()                           # closes it: the next step opens it again
+        return "; ".join(opened)
 
     def build_demods():
         from .radio.demod import build_all
@@ -88,8 +117,8 @@ def check_radio() -> int:
         from .radio.flowgraph import GnuRadioBackend
         from .state import RadioState
         QtCore.QCoreApplication(sys.argv[:1])
-        GnuRadioBackend(RadioState())
-        return "GnuRadioBackend constructed"
+        backend = GnuRadioBackend(RadioState(), lineup=lineup)
+        return f"GnuRadioBackend constructed, receiving on the {backend.source.label}"
 
     def optional_extras():
         from . import sysinfo
@@ -112,6 +141,7 @@ def check_radio() -> int:
     print("PiSDR radio check")
     step("rtl_test", rtl_test)
     step("gnuradio", import_gr)
+    step("tuners", find_tuners)
     step("gr-osmosdr", import_osmo)
     step("open RTL-SDR", open_source)
     step("demodulators", build_demods)

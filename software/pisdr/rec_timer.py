@@ -25,6 +25,8 @@ class RecTimer(QObject):
         self._end_t = 0.0
         self._fired_day: int | None = None    # UTC day ordinal of the last start
         self._restore: dict | None = None
+        #: asked before starting: True puts the start off (the tuner for that frequency is busy)
+        self.must_wait = lambda hz: False
         self._timer = QTimer(self)
         self._timer.setInterval(config.REC_TIMER_CHECK_MS)
         self._timer.timeout.connect(self.check)
@@ -52,6 +54,8 @@ class RecTimer(QObject):
             return
         if not s.timer_armed or s.timer_target is None or s.dongle_lent:
             return
+        if self.must_wait(s.timer_target["vfo_hz"]):
+            return                            # started late rather than recorded deaf
         now = time.time() if now is None else now
         tm = time.gmtime(now)
         now_min = tm.tm_hour * 60 + tm.tm_min

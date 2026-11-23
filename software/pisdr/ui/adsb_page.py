@@ -1,7 +1,8 @@
 """ADS-B map: a 360-degree radar of the aircraft the decoder is tracking, with flight data and a list.
 
-Shown while a dump1090-family decoder owns the dongle (see ``radio/adsb_decoder.py``); BACK
-gives the dongle back to the receiver. North is up, the receiver is in the middle and the
+Shown while a dump1090-family decoder runs on the ADS-B dongle (see ``radio/adsb_decoder.py``);
+BACK stops it. The receiver keeps playing on the other dongle meanwhile, or is paused when
+there is only one. North is up, the receiver is in the middle and the
 rings are distances from it in nautical miles. The map fills the left of the screen with
 its buttons laid over it, the flight data is on the right; the colours are the theme's.
 
@@ -542,7 +543,7 @@ class RadarView(QtWidgets.QWidget):
         """Text across the plot when there is nothing to draw, and its colour."""
         s = self.state
         if s.adsb_error:
-            return f"{s.adsb_error}\nPress BACK to get the radio back.", QtGui.QColor(style.REC)
+            return f"{s.adsb_error}\nPress BACK to return to the radio.", QtGui.QColor(style.REC)
         if not s.aircraft:
             return "Listening on 1090 MHz...", QtGui.QColor(style.ACCENT)
         if not any(ac.has_position for ac in s.aircraft):

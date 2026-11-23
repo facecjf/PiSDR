@@ -76,6 +76,13 @@ def no_network(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_dongles(monkeypatch):
+    """Nothing may open a real RTL-SDR: tests that want dongles hand a Lineup to the back end."""
+    from pisdr.radio import tuners
+    monkeypatch.setattr(tuners, "scan", lambda: [])
+
+
+@pytest.fixture(autouse=True)
 def slot_errors(monkeypatch):
     """Fail the test if a Qt slot raised (PyQt5 would otherwise abort the whole run)."""
     errors: list[BaseException] = []
@@ -132,9 +139,7 @@ def pump(app, seconds: float = 0.05) -> None:
 _CLOSED_WINDOWS: list = []
 
 
-@pytest.fixture
-def window(qapp, monkeypatch):
-    """The real main window on the simulated backend, 800x480, offscreen."""
+def _open_window(qapp, monkeypatch, lineup=None):
     from pisdr.radio.backend_sim import SimBackend
     from pisdr.state import RadioState
     from pisdr.ui import settings_page
@@ -146,7 +151,7 @@ def window(qapp, monkeypatch):
                         types.SimpleNamespace(Popen=lambda cmd, *a, **k: launched.append(cmd)))
     st = RadioState()
     st.load()
-    backend = SimBackend(st, reason="--sim requested")
+    backend = SimBackend(st, reason="--sim requested", lineup=lineup)
     win = MainWindow(st, backend, windowed=True)
     win.spacewx.stop()
     win.launched = launched
@@ -157,3 +162,16 @@ def window(qapp, monkeypatch):
     win.close()
     pump(qapp, 0.05)
     _CLOSED_WINDOWS.append(win)     # late single-shot timers must still find their widgets
+
+
+@pytest.fixture
+def window(qapp, monkeypatch):
+    """The real main window on the simulated backend (XTR + V3), 800x480, offscreen."""
+    yield from _open_window(qapp, monkeypatch)
+
+
+@pytest.fixture
+def one_dongle_window(qapp, monkeypatch):
+    """The same with a single dongle, which is lent to the ADS-B decoder while the map is open."""
+    from pisdr.radio.tuners import Lineup
+    yield from _open_window(qapp, monkeypatch, Lineup())

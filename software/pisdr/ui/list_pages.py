@@ -380,7 +380,7 @@ class NetworkPage(Page):
         ip = sysinfo.lan_address()
         self.address.setText(f"{ip} : {config.RTL_TCP_PORT}")
         alive = getattr(self.backend, "rtl_tcp_alive", True)
-        state = "rtl_tcp is serving the dongle." if alive else \
+        state = f"rtl_tcp is serving the {self.backend.source.dongle.spec.name}." if alive else \
             "rtl_tcp has stopped - press STOP to get the radio back."
         self.body.setText(
             f"{state}\n\nIn SDR++, SDR# or GQRX choose the RTL-TCP source and connect to "

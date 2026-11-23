@@ -512,7 +512,7 @@ def test_random_session(window, qapp, seed, monkeypatch):
             assert state.adsb_mode == (window.stack.currentIndex() == window.PAGE_ADSB)
             if state.adsb_mode and step % 100 == 0:
                 window.backend.poll_adsb()             # the map gets traffic to draw and select
-    if state.dongle_lent:
+    if state.adsb_mode or state.network_mode:
         window.key_pressed(3)
     window.show_main()
     pump(qapp, 0.1)

@@ -82,6 +82,7 @@ def bottom_indicators(s: RadioState) -> tuple[list[Indicator], list[Indicator]]:
     gain = "AGC" if s.agc else f"{s.gain_db:.0f}dB"
     left = [
         Indicator("band", s.band.name, "info", "band"),
+        Indicator("tuner", s.tuner or "RTL", "on", "settings:Tuner"),       # the dongle receiving now
         Indicator("step", f"Step {format_step(s.step_hz)}", "on", "step"),
         Indicator("zoom", f"Zoom {s.spectrum_zoom}", "on" if s.spectrum_zoom > 1 else "off", "zoom"),
         Indicator("knob", f"Knob {KNOB_NAMES.get(s.knob_function, s.knob_function)}",

@@ -1,4 +1,4 @@
-"""GNU Radio backend for the RTL-SDR Blog V4.
+"""GNU Radio backend for the two RTL-SDR dongles (NESDR SMArt XTR and RTL-SDR Blog V3).
 
 Flowgraph::
 
@@ -22,9 +22,12 @@ Flowgraph::
 [NB]/[NR] are Python blocks and are only wired in while their level is > 0, so the default
 audio path never waits on the Python GIL (which the waterfall painter holds a lot).
 
-Changing the bias tee, entering network mode or opening the ADS-B map tears the whole
-flowgraph down (which is the only reliable way to make gr-osmosdr close the dongle) and
-builds a fresh one afterwards.
+One dongle feeds this graph at a time. Moving to the other one, switching the V3 between
+its tuner and direct sampling (HF), changing the bias tee and entering network mode all
+tear the whole flowgraph down (which is the only reliable way to make gr-osmosdr close the
+dongle) and build a fresh one afterwards. The ADS-B decoder runs on the second dongle
+beside this graph; only when it needs the dongle the graph is using is the graph torn down
+for it too.
 
 Run ``python3 -m pisdr.radio.flowgraph --freq 162.4e6 --mode NFM`` for a headless test.
 """
@@ -50,7 +53,7 @@ from .. import config
 from ..adsb import receiver_position
 from ..qt import QTimer
 from ..sysinfo import lan_address
-from . import adsb_decoder
+from . import adsb_decoder, tuners
 from .adsb_decoder import AdsbDecoder
 from .audio_dsp import AudioFilters, NoiseReducer, PeakBlanker
 from .backend import Backend
@@ -73,8 +76,8 @@ XLATE_DECIM = config.SAMPLE_RATE // config.IF_RATE   # 8
 
 
 class GnuRadioBackend(Backend):
-    def __init__(self, state, parent=None) -> None:
-        super().__init__(state, parent)
+    def __init__(self, state, parent=None, lineup: tuners.Lineup | None = None) -> None:
+        super().__init__(state, parent, lineup)
         self._bias = state.bias_tee
         self._mode_index = {m: i for i, m in enumerate(config.MODES)}
         self._record_path: Path | None = None
@@ -88,7 +91,7 @@ class GnuRadioBackend(Backend):
 
     # ------------------------------------------------------------------ construction
     def _make_source(self) -> osmosdr.source:
-        args = f"numchan=1 {config.RTL_DEVICE_ARGS}" + (",bias=1" if self._bias else "")
+        args = f"numchan=1 {self.source.device_args(self._bias)}"
         src = osmosdr.source(args=args)
         src.set_sample_rate(config.SAMPLE_RATE)
         src.set_freq_corr(self.state.ppm, 0)
@@ -240,7 +243,23 @@ class GnuRadioBackend(Backend):
     def _hw_start(self) -> None:
         self.tb.start()
         self._poll.start()
-        self.status.emit("RTL-SDR running")
+        self.status.emit(f"{self.source.dongle.spec.name} running")
+        if self._bias and not self.source.dongle.spec.bias_tee:
+            # The bias tee is on a dongle this graph has not opened: switch it on from outside.
+            for dongle in self.lineup.dongles:
+                if dongle.spec.bias_tee and not tuners.switch_bias_tee(dongle.index, True):
+                    log.warning("bias tee is on in settings but rtl_biast could not switch it on")
+
+    def _hw_select_source(self, source: tuners.Source) -> str | None:
+        """gr-osmosdr takes the device and direct sampling at open time only: rebuild."""
+        self._teardown()
+        return self._rebuild()
+
+    def _hw_release(self) -> None:
+        self._teardown()
+
+    def _hw_reopen(self) -> str | None:
+        return self._rebuild()
 
     def _hw_stop(self) -> None:
         self._poll.stop()
@@ -292,6 +311,15 @@ class GnuRadioBackend(Backend):
         if on == self._bias:
             return
         self._bias = on
+        if not self.source.dongle.spec.bias_tee:
+            # The receiver is on the dongle without one. Set it on the other, which is idle
+            # (the ADS-B map cannot be open: its page has no way to reach this setting).
+            other = next((d for d in self.lineup.dongles if d.spec.bias_tee), None)
+            if other is None:
+                self.status.emit("This tuner has no bias tee")
+            elif not tuners.switch_bias_tee(other.index, on):
+                self.status.emit(f"Bias tee {'ON' if on else 'OFF'} from the next time the {other.spec.key} is used")
+            return
         self.status.emit("Reopening the dongle...")
         self._teardown()
         error = self._rebuild()
@@ -441,9 +469,11 @@ class GnuRadioBackend(Backend):
             return "rtl_tcp not found (sudo apt install rtl-sdr)"
         self._teardown()
         cmd = [exe, "-a", "0.0.0.0", "-p", str(config.RTL_TCP_PORT)]
+        if self.source.dongle.index:
+            cmd += ["-d", str(self.source.dongle.index)]
         if self.state.ppm:
             cmd += ["-P", str(self.state.ppm)]
-        if self.state.bias_tee and _rtl_tcp_has_bias_flag(exe):
+        if self.state.bias_tee and self.source.dongle.spec.bias_tee and _rtl_tcp_has_bias_flag(exe):
             cmd += ["-T"]
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -479,21 +509,20 @@ class GnuRadioBackend(Backend):
         return self._rtl_tcp is not None and self._rtl_tcp.poll() is None
 
     # ------------------------------------------------------------------ ADS-B mode (dump1090)
+    def _hw_adsb_problem(self) -> str | None:
+        return adsb_decoder.problem_with(adsb_decoder.find_program())
+
     def _hw_adsb(self, on: bool) -> str | None:
         if not on:
             self.adsb.stop()
-            return self._rebuild()
-        problem = adsb_decoder.problem_with(adsb_decoder.find_program())
-        if problem:
-            return problem                         # nothing to hand the dongle to: leave the radio alone
-        self._teardown()
+            return None
+        dongle = self.lineup.adsb
         where = receiver_position(self.state)
         # An IP-derived location can be tens of km out; only a location the user set is passed on.
         position = where[:2] if where and where[2] == "settings" else None
-        error = self.adsb.start(ppm=self.state.ppm, bias_tee=self.state.bias_tee, position=position)
-        if error:
-            return error + _suffix(self._rebuild())
-        return None
+        return self.adsb.start(ppm=self.state.ppm, bias_tee=self.state.bias_tee and dongle.spec.bias_tee,
+                               position=position,
+                               device=dongle.index if self.lineup.aux is not None else None)
 
     def _hw_adsb_poll(self) -> tuple[list, int, str]:
         return self.adsb.read()
@@ -547,7 +576,7 @@ def _cli(argv: list[str] | None = None) -> int:
     state.set_squelch(args.squelch)
     state.set_volume(args.volume)
     state.set_vfo(args.freq)
-    backend = GnuRadioBackend(state)
+    backend = GnuRadioBackend(state, lineup=tuners.detect())
 
     frames = {"n": 0}
 

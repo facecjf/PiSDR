@@ -99,12 +99,19 @@ echo "   registered in ~/.config/autostart/pisdr.desktop"
 
 echo "== driver check"
 if command -v rtl_test >/dev/null; then
-  if timeout 5 rtl_test -t 2>&1 | grep -q "V4"; then
-    echo "   RTL-SDR Blog V4 detected by librtlsdr - good."
+  # rtl_test lists every dongle before it opens the first one.
+  FOUND="$(timeout 5 rtl_test -t 2>&1 || true)"
+  COUNT="$(grep -oE 'Found [0-9]+ device' <<<"$FOUND" | grep -oE '[0-9]+' || echo 0)"
+  grep -E '^ +[0-9]+: ' <<<"$FOUND" | sed 's/^/  /' || true
+  if [[ "$COUNT" -ge 2 ]]; then
+    echo "   $COUNT RTL-SDR dongles found - good. 'python3 -m pisdr --check' shows which does what."
+  elif [[ "$COUNT" -eq 1 ]]; then
+    echo "   NOTE: only one RTL-SDR found. PiSDR works with one, but expects two:"
+    echo "   the NESDR SMArt XTR (main tuner) and the RTL-SDR Blog V3 (ADS-B, HF)."
   else
-    echo "   WARNING: rtl_test did not report an RTL-SDR Blog V4."
-    echo "   Either the dongle is not plugged in, the DVB driver still holds it (reboot),"
-    echo "   or librtlsdr is too old - see docs/02_software_setup.md section 2."
+    echo "   WARNING: rtl_test found no RTL-SDR."
+    echo "   Either the dongles are not plugged in or the DVB driver still holds them (reboot)"
+    echo "   - see docs/02_software_setup.md section 2."
   fi
 fi
 
