@@ -4,7 +4,7 @@ Works with dump1090-fa, dump1090-mutability and readsb: all of them take ``--wri
 <dir>`` and rewrite ``<dir>/aircraft.json`` every second. No network ports are opened. The
 folder is on a RAM disk when there is one, so the SD card is not written every second.
 
-With two dongles the decoder is given the index of its own (the RTL-SDR Blog V3). The
+With two dongles the decoder is given the index of its own (the NESDR SMArt XTR). The
 caller must not have that dongle open during :meth:`AdsbDecoder.start` and may open it
 again after :meth:`AdsbDecoder.stop`.
 """

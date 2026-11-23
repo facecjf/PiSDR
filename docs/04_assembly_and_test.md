@@ -8,13 +8,14 @@ is printed before the enclosure.
 1. Mount the Pi on the display standoffs, 5 cm FFC, pogo pins aligned. Power up, confirm
    picture and touch (doc 02 section 1).
 2. Plug both dongles into the Pi, each on its own USB extension. `rtl_test -t` must list
-   two devices, and `python3 -m pisdr --check` (after step 3) must name the NESDR SMArt XTR
-   as the main tuner and the RTL-SDR Blog V3 for ADS-B and HF (doc 02 section 2).
+   two devices, and `python3 -m pisdr --check` (after step 3) must name the RTL-SDR Blog V3
+   as the main tuner and the NESDR SMArt XTR for ADS-B (doc 02 section 2). The listening
+   antenna goes on the V3, the 1090 MHz antenna on the XTR.
 3. Install the app (doc 02 sections 3-4). Run `python3 -m pisdr --windowed`. You should see
    a live spectrum. Tune to a local FM station (BAND -> FM bcast) and hear audio; the
-   line under the frequency should read `XTR`. Pick an HF band (BAND -> 40 m): it should
-   change to `V3 HF` after about a second. Then BAND -> FM bcast again, BAND -> ADS-B 1090:
-   the aircraft map opens and the FM station keeps playing.
+   line under the frequency should read `V3`. Pick an HF band (BAND -> 40 m): it should
+   change to `V3 HF` after about a second. Then BAND -> ADS-B 1090: the aircraft map opens
+   and the receiver keeps playing, on 40 m or on FM alike.
 4. Run the headless check as well, it isolates the radio from the UI:
    `python3 -m pisdr.radio.flowgraph --freq 100.1e6 --mode WFM --seconds 15`.
 5. Wire the EC11 module and the four keys on a breadboard first (doc 01 section 3). Run
@@ -100,7 +101,8 @@ about 230 C. Keep them square; the back-wall screws must find them.
 | Every key lines up under its label; knob turns freely, no rub on the faceplate | yes |
 | 30 min on FM broadcast with the display at full brightness: `vcgencmd measure_temp` | < 75 C |
 | Shell above the Pi after 30 min | warm, not hot (< 50 C) |
-| FM broadcast on the XTR with the ADS-B map open for 30 min (both dongles and `dump1090` working): `vcgencmd measure_temp`, and no audio drop-outs | < 75 C |
+| FM broadcast on the V3 with the ADS-B map open for 30 min (both dongles and `dump1090` working): `vcgencmd measure_temp`, and no audio drop-outs | < 75 C |
+| Aircraft on the map (XTR) compared with the same antenna on the V3 (`PISDR_MAIN_TUNER`, doc 02 section 2) | a similar count and range; if far fewer, see doc 01 section 4 |
 | HF reception (40 m, 20 m) with an HF antenna on the V3 vs. the V3 on a bare laptop | noise floor within ~6 dB |
 | Recording (K4) produces a playable WAV in `~/Recordings` | yes |
 

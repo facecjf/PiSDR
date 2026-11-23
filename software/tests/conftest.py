@@ -166,7 +166,7 @@ def _open_window(qapp, monkeypatch, lineup=None):
 
 @pytest.fixture
 def window(qapp, monkeypatch):
-    """The real main window on the simulated backend (XTR + V3), 800x480, offscreen."""
+    """The real main window on the simulated backend (V3 + XTR), 800x480, offscreen."""
     yield from _open_window(qapp, monkeypatch)
 
 

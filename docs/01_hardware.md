@@ -7,8 +7,8 @@
 | 1 | Raspberry Pi 4 Model B | 1 | 2 GB is enough. 85 x 56 mm, holes 58 x 49 mm on 3.5 mm insets |
 | 2 | Power supply 5.1 V / 3 A USB-C (official Pi 4 PSU) | 1 | Cheaper supplies sag under the Pi + screen + two SDRs |
 | 3 | microSD 16 GB or larger, A1/A2 class | 1 | |
-| 4 | Nooelec NESDR SMArt XTR | 1 | **Main tuner.** Elonics E4000, about 65-2300 MHz with a gap around 1100-1250 MHz, 0.5 ppm TCXO, SMA female, no bias tee. Aluminium case (**measure yours**) |
-| 4a | RTL-SDR Blog V3 | 1 | **ADS-B on 1090 MHz, and HF.** R820T2 tuner 24-1766 MHz, 500 kHz-24 MHz by direct sampling, 1 ppm TCXO, SMA female, 4.5 V software bias tee. Aluminium case about 70 x 27 x 12 mm (**measure yours**) |
+| 4 | RTL-SDR Blog V3 | 1 | **Main tuner.** R820T2 tuner 24-1766 MHz, 500 kHz-24 MHz by direct sampling, 1 ppm TCXO, SMA female, 4.5 V software bias tee. Aluminium case about 70 x 27 x 12 mm (**measure yours**) |
+| 4a | Nooelec NESDR SMArt XTR | 1 | **ADS-B on 1090 MHz**, and reception above 1766 MHz. Elonics E4000, about 65-2300 MHz with a gap around 1100-1250 MHz, 0.5 ppm TCXO, SMA female, no bias tee. Aluminium case (**measure yours**) |
 | 5 | USB-A male to USB-A female extension, 15-30 cm, shielded, with ferrite | 2 | One per dongle. Keeps them off the Pi's USB stack, away from the display driver and apart from each other (side by side in the Pi's ports they do not fit, and they heat each other) |
 | 6 | Hosyond 7" IPS capacitive DSI touchscreen 800x480 (Amazon B0D3QB7X4Z) | 1 | Module 164.89 x 102.00 x 12.25 mm, active area 154.68 x 87.02 mm, 5 V 510 mA max |
 | 7 | EC11 rotary encoder module, 5 pins (GND, +, SW, DT, CLK) | 1 | Also sold as "KY-040". PCB about 32 x 19 mm, 20-step, D-shaft or knurled 6 mm shaft (**measure**) |
@@ -117,15 +117,15 @@ GPIO2/3 stay free. Pins 31-40 remain available for a fan tach/PWM or future keys
 
 ## 4. The two dongles: jobs, placement and antenna inputs
 
-| | NESDR SMArt XTR | RTL-SDR Blog V3 |
+| | RTL-SDR Blog V3 | NESDR SMArt XTR |
 |---|---|---|
-| Job | main tuner: listening and scanning | ADS-B on 1090 MHz; HF and the other frequencies the XTR lacks |
-| Tuner chip | Elonics E4000 | Rafael Micro R820T2 |
-| Tuner range | about 65-2300 MHz, gap around 1100-1250 MHz | 24-1766 MHz |
-| Below 24 MHz | nothing | 500 kHz-24 MHz by direct sampling (Q branch) |
-| RF gain | 0-42 dB | 0-49.6 dB (no effect in direct sampling) |
-| Bias tee | none | 4.5 V, switched in software |
-| Antenna | the general-coverage VHF/UHF antenna | the 1090 MHz antenna; an HF antenna when it is used for HF |
+| Job | main tuner: listening and scanning, 500 kHz to 1766 MHz | ADS-B on 1090 MHz; the receiver's tuner above 1766 MHz |
+| Tuner chip | Rafael Micro R820T2 | Elonics E4000 |
+| Tuner range | 24-1766 MHz | about 65-2300 MHz, gap around 1100-1250 MHz |
+| Below 24 MHz | 500 kHz-24 MHz by direct sampling (Q branch) | nothing |
+| RF gain | 0-49.6 dB (no effect in direct sampling) | 0-42 dB |
+| Bias tee | 4.5 V, switched in software | none |
+| Antenna | the general-coverage antenna; an HF antenna for HF and CB | the 1090 MHz antenna |
 
 - The application tells the two apart by their tuner chips and decides which one receives
   from the frequency (doc 02 section 5g). **Which USB port each is in does not matter.**
@@ -133,25 +133,39 @@ GPIO2/3 stay free. Pins 31-40 remain available for a fan tach/PWM or future keys
   in particular. `XTR_RANGES_HZ` in `software/pisdr/config.py` holds the numbers the
   application goes by. If yours tunes 1100-1250 MHz anyway, or goes deaf before 1100 MHz,
   change them there.
-- **The V3's one antenna socket serves both of its jobs.** A 1090 MHz antenna hears next to
-  nothing on HF and an HF wire is a poor ADS-B antenna, so decide what stays connected:
-  with the ADS-B antenna on it, HF through the V3 is for strong broadcast stations only.
-  A diplexer (HF / UHF) into the one socket lets both antennas stay connected.
+- **The antennas follow the jobs.** The 1090 MHz antenna goes on the **XTR's** socket and
+  the antenna you listen with on the **V3's**. If the dongles had the jobs the other way
+  round before, swap the two antenna leads.
+- **The V3's one antenna socket serves HF and VHF/UHF.** A VHF/UHF whip hears little on
+  HF and an HF wire is a poor VHF antenna, so decide what stays connected, or put a
+  diplexer (HF / VHF-UHF) in front of the one socket so both antennas can stay.
+- **ADS-B on the E4000 is the weaker half of this arrangement.** 1090 MHz is only 10 MHz
+  below the nominal start of the E4000's gap, and where the gap starts differs from unit
+  to unit: if `rtl_test -t` on your XTR reports an `E4K L-band gap` that begins below about
+  1095 MHz, ADS-B on it will be poor. An E4000 is also somewhat less sensitive at 1090 MHz
+  than an R820T2, and the XTR cannot power an amplified 1090 MHz antenna (see the bias tee
+  below). If the map shows clearly fewer aircraft than the V3 did, the jobs can be given
+  back the other way without touching the hardware other than the antenna leads: doc 02
+  section 2, "name the dongles".
+- Above 1766 MHz the receiver listens through the XTR, and so through the 1090 MHz
+  antenna, which is at least in the right part of the spectrum for it.
 - Direct sampling has no tuner in front of the ADC: there is no RF gain control, strong
   medium-wave stations can overload it, and above 14.4 MHz signals from 28.8 MHz minus the
   frequency fold in on top (the V3 has no filter for that). It is good enough for
-  broadcast, WWV and the stronger amateur signals; an upconverter or a Blog V4 in the V3's
-  place does HF properly, and the application uses a V4 without direct sampling if it
-  finds one.
+  broadcast, WWV, CB (27 MHz is above 24 MHz, so the tuner is used) and the stronger
+  amateur signals; an upconverter or a Blog V4 in the V3's place does HF properly, and the
+  application uses a V4 without direct sampling if it finds one.
 - Mount the dongles away from the display's driver board and the Pi's SoC, each on its own
   USB extension with the ferrite close to the dongle. The enclosure in `cad/` is the
   earlier single-dongle one (one cradle, one SMA hole); see the note in doc 03.
 - Each dongle gets its own SMA bulkhead and pigtail. The user connects antennas to the
   bulkheads, never to the dongles.
 - **Bias tee stays OFF** (default in the app) unless you know the antenna on the **V3**
-  needs 4.5 V, for example a 1090 MHz antenna with a built-in amplifier. A passive wire,
-  9:1 unun or a magnetic loop with its own supply must not see bias. The XTR has none; the
-  setting never puts voltage on its socket.
+  needs 4.5 V, for example an active antenna or a preamplifier at the feed point. A passive
+  wire, 9:1 unun or a magnetic loop with its own supply must not see bias. The XTR has
+  none; the setting never puts voltage on its socket, so a 1090 MHz antenna with a built-in
+  amplifier, or an ADS-B LNA, needs its own supply there (a bias-tee injector, or an LNA
+  powered from USB).
 
 ## 5. Power budget
 

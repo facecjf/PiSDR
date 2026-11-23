@@ -2,11 +2,11 @@
 
 The radio has two dongles with different tuner chips:
 
-* **Nooelec NESDR SMArt XTR** (Elonics E4000): the main tuner. About 65-2300 MHz with a gap
-  around 1100-1250 MHz, no HF, no bias tee.
-* **RTL-SDR Blog V3** (Rafael Micro R820T2): decodes ADS-B on 1090 MHz. It also tunes
-  24-1766 MHz and, by direct sampling on the Q branch, 500 kHz-24 MHz, so it receives what
-  the E4000 cannot. It has the bias tee.
+* **RTL-SDR Blog V3** (Rafael Micro R820T2): the main tuner. 24-1766 MHz and, by direct
+  sampling on the Q branch, 500 kHz-24 MHz. It has the bias tee.
+* **Nooelec NESDR SMArt XTR** (Elonics E4000): decodes ADS-B on 1090 MHz. It tunes about
+  65-2300 MHz with a gap around 1100-1250 MHz, so it also receives what lies above the
+  V3's 1766 MHz. No HF, no bias tee.
 
 The dongles are told apart by their tuner chip, which librtlsdr reports when it opens a
 device. That needs no set-up and works when both carry the factory serial number.
@@ -66,6 +66,9 @@ V4 = TunerSpec("V4", "RTL-SDR Blog V4 (R828D)", (config.V4_RANGE_HZ,))
 GENERIC = TunerSpec("RTL", "RTL-SDR", ((config.FREQ_MIN, config.FREQ_MAX),))
 
 _BY_CHIP = {_E4000: XTR, _R820T: V3, _R828D: V4}
+# Who gets the receiver when there is a choice, best first. The last one left gets ADS-B:
+# that is the XTR, which has the least coverage and nothing below 65 MHz.
+_MAIN_ORDER = (V4, V3, GENERIC, XTR)
 
 
 @dataclass(frozen=True)
@@ -182,12 +185,10 @@ def assign(dongles: list[Dongle]) -> Lineup:
     aux = _named([d for d in dongles if d is not main], config.ADSB_TUNER)
     rest = [d for d in dongles if d is not main and d is not aux]
     if main is None:
-        # The XTR; failing that, one that is not the V3, so that the V3 is left for ADS-B and HF.
-        main = next((d for d in rest if d.spec is XTR), None) or \
-            next((d for d in rest if not d.spec.direct), rest[0])
+        main = min(rest, key=lambda d: _MAIN_ORDER.index(d.spec))    # first of equals
         rest.remove(main)
     if aux is None and rest:
-        aux = next((d for d in rest if d.spec.direct), rest[0])      # the one that also does HF
+        aux = max(rest, key=lambda d: _MAIN_ORDER.index(d.spec))
     return Lineup(main, aux)
 
 
@@ -243,7 +244,7 @@ def detect() -> Lineup:
     lineup = assign(scan())
     log.info("main tuner: %s", lineup.main.describe())
     if lineup.aux is not None:
-        log.info("second tuner (ADS-B, HF): %s", lineup.aux.describe())
+        log.info("second tuner (ADS-B): %s", lineup.aux.describe())
     return lineup
 
 

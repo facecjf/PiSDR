@@ -648,7 +648,7 @@ def test_the_map_has_its_own_dongle_and_the_radio_plays_on(window, qapp):
     window.band_page.buttons[adsb_tile(window)].click()
     assert state.adsb_mode and window.stack.currentIndex() == window.PAGE_ADSB
     assert (state.vfo_hz, state.band.name) == (100_100_000, band), "the receiver was retuned to 1090 MHz"
-    assert window.backend.running and not state.receiver_paused and state.tuner == "XTR"
+    assert window.backend.running and not state.receiver_paused and state.tuner == "V3"
     top = window.topbar_left.text()
     assert "ADS-B MAP" in top and "100.1000 MHz WFM" in top and "paused" not in top
     window.key_pressed(3)                              # BACK
@@ -659,7 +659,7 @@ def test_the_map_has_its_own_dongle_and_the_radio_plays_on(window, qapp):
 
 def test_the_map_says_so_when_the_receiver_had_to_stop_for_it(window, qapp):
     state = window.state
-    state.set_vfo(7_200_000)                           # HF is on the V3, which the map needs
+    state.set_vfo(2_000_000_000)                       # above the V3: on the XTR, which the map needs
     window._enter_adsb()
     assert state.adsb_mode and state.receiver_paused and "receiver paused" in window.topbar_left.text()
     window.key_pressed(3)

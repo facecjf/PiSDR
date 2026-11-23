@@ -107,7 +107,7 @@ if command -v rtl_test >/dev/null; then
     echo "   $COUNT RTL-SDR dongles found - good. 'python3 -m pisdr --check' shows which does what."
   elif [[ "$COUNT" -eq 1 ]]; then
     echo "   NOTE: only one RTL-SDR found. PiSDR works with one, but expects two:"
-    echo "   the NESDR SMArt XTR (main tuner) and the RTL-SDR Blog V3 (ADS-B, HF)."
+    echo "   the RTL-SDR Blog V3 (main tuner) and the NESDR SMArt XTR (ADS-B)."
   else
     echo "   WARNING: rtl_test found no RTL-SDR."
     echo "   Either the dongles are not plugged in or the DVB driver still holds them (reboot)"

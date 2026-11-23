@@ -1,7 +1,7 @@
 # PiSDR - a touch-first receiver built from a Raspberry Pi 4 and two RTL-SDR dongles
 
-A self-contained SDR receiver: Raspberry Pi 4, a Nooelec NESDR SMArt XTR as the main tuner,
-an RTL-SDR Blog V3 for ADS-B and HF, Hosyond 7" 800x480 DSI
+A self-contained SDR receiver: Raspberry Pi 4, an RTL-SDR Blog V3 as the main tuner,
+a Nooelec NESDR SMArt XTR for ADS-B, Hosyond 7" 800x480 DSI
 touchscreen, one EC11 rotary encoder module and four 12 mm tactile keys, in a 3D-printed
 enclosure. The receiver application is written for this exact screen and control set
 (GNU Radio backend, PyQt/pyqtgraph front end), so the knob and keys do what a radio
@@ -9,20 +9,20 @@ owner expects rather than driving a desktop program through a remote-control soc
 
 ## The two tuners
 
-| | Nooelec NESDR SMArt XTR | RTL-SDR Blog V3 |
+| | RTL-SDR Blog V3 | Nooelec NESDR SMArt XTR |
 |---|---|---|
-| Job | **Main tuner**: what you listen to and scan | **ADS-B** on 1090 MHz, and whatever the XTR cannot tune |
-| Tuner chip | Elonics E4000 | Rafael Micro R820T2 |
-| Receives | about 65 - 2300 MHz, with a gap around 1100 - 1250 MHz | 24 - 1766 MHz, and 500 kHz - 24 MHz by direct sampling |
-| Bias tee | no | yes, 4.5 V |
-| On screen | `XTR` | `V3`, or `V3 HF` in direct sampling |
+| Job | **Main tuner**: what you listen to and scan, HF and CB included | **ADS-B** on 1090 MHz, and what lies above the V3's range |
+| Tuner chip | Rafael Micro R820T2 | Elonics E4000 |
+| Receives | 24 - 1766 MHz, and 500 kHz - 24 MHz by direct sampling | about 65 - 2300 MHz, with a gap around 1100 - 1250 MHz |
+| Bias tee | yes, 4.5 V | no |
+| On screen | `V3`, or `V3 HF` in direct sampling | `XTR` |
 
-The application picks the dongle from the frequency: the XTR wherever it tunes, the V3 for
-HF, 24 - 65 MHz (CB, 10 m, 6 m) and the XTR's gap. The one in use is shown on the VFO bar
-beside the band, and Settings → RADIO → **Tuner** can hold the receiver to one of them.
-Opening the ADS-B map starts `dump1090` on the V3 and the receiver **keeps playing** on the
-XTR. Only one dongle feeds the receiver at a time, so the map and HF listening cannot run
-together: from an HF band the receiver pauses while the map is open. With a single dongle
+The application picks the dongle from the frequency: the V3 for everything up to 1766 MHz,
+the XTR above that. The one in use is shown on the VFO bar beside the band, and
+Settings → RADIO → **Tuner** can hold the receiver to one of them.
+Opening the ADS-B map starts `dump1090` on the XTR and the receiver **keeps playing** on the
+V3, on any band from medium wave to 1766 MHz. Only above 1766 MHz, where the receiver needs
+the XTR itself, does it pause while the map is open. With a single dongle
 attached (either of these, or a Blog V4) everything still works the way it did with one.
 Details in `docs/02_software_setup.md` section 5g.
 
@@ -70,8 +70,8 @@ the first full print.
 Full table with notes in `docs/01_hardware.md`.
 
 - Raspberry Pi 4 Model B (2 GB or more), 5.1 V / 3 A USB-C supply, microSD 16 GB+
-- Nooelec NESDR SMArt XTR (E4000, 0.5 ppm TCXO, SMA): the main tuner
-- RTL-SDR Blog V3 (R820T2, 1 ppm TCXO, SMA, bias tee): ADS-B and HF
+- RTL-SDR Blog V3 (R820T2, 1 ppm TCXO, SMA, bias tee): the main tuner, HF included
+- Nooelec NESDR SMArt XTR (E4000, 0.5 ppm TCXO, SMA): ADS-B
 - 2 x 15-30 cm USB-A male-to-female extensions, one per dongle
 - Hosyond 7" IPS capacitive DSI touchscreen, 800x480 (B0D3QB7X4Z) with its standoffs and FFC
 - EC11 rotary encoder **module** (5 pins: GND, +, SW, DT, CLK)
@@ -155,7 +155,7 @@ HF conditions numbers and the aircraft in them are sample values.
   a sortable flight list.
   The map takes the room of the soft-key bar and has its own buttons; the four keys still
   act as `ZOOM − / ZOOM + / LIST / BACK`, the knob selects an aircraft.
-  `dump1090` runs on the V3 while the map is open and the receiver carries on with the XTR;
+  `dump1090` runs on the XTR while the map is open and the receiver carries on with the V3;
   the band picker's ADS-B tile therefore does not retune the receiver (see
   `docs/02_software_setup.md` section 5f).
 - Encoder push cycles the tuning step (10 Hz ... 1 MHz), and so does a tap on a digit of the
@@ -177,7 +177,7 @@ HF conditions numbers and the aircraft in them are sample values.
 ## Developing on a PC
 
 The UI runs on Windows, macOS or Linux without any radio hardware using a simulated
-backend, which pretends to be the same pair of dongles (an XTR and a V3):
+backend, which pretends to be the same pair of dongles (a V3 and an XTR):
 
 ```powershell
 cd software

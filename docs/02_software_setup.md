@@ -41,13 +41,15 @@ Expected: `Found 2 device(s):` with a numbered line for each, then for one of th
 `Found Elonics E4000 tuner` (the NESDR SMArt XTR) and for the other
 `Found Rafael Micro R820T tuner` (the RTL-SDR Blog V3). Which is device 0 and which is
 device 1 depends on the USB ports and does not matter: PiSDR reads the tuner chip of each
-when it starts and gives the E4000 the main receiver and the R820T ADS-B and HF.
+when it starts and gives the R820T the main receiver and the E4000 ADS-B.
 
 On the E4000 `rtl_test -t` goes on to measure what that particular chip tunes and prints
 two lines like `E4K range: 52 to 2210 MHz` and `E4K L-band gap: 1105 to 1242 MHz`. If your
 numbers are far from 65-2300 MHz and 1100-1250 MHz, put yours into `XTR_RANGES_HZ` in
 `software/pisdr/config.py`, a little inside what was measured. (On the R820T the same
-option only says there is no E4000 to test.)
+option only says there is no E4000 to test.) The start of the gap matters more than the
+rest: the XTR decodes ADS-B on 1090 MHz, so a gap that starts below about 1095 MHz is a
+reason to give the jobs the other way round, as follows.
 
 **Optional: name the dongles.** Nothing needs this. It is for the case where the chips
 cannot tell them apart (two dongles of the same kind) or you want the jobs the other way
@@ -61,7 +63,9 @@ rtl_eeprom -s PISDRADSB      # with only the ADS-B dongle attached
 then tell PiSDR, either in `software/pisdr/config.py` (`MAIN_TUNER`, `ADSB_TUNER`) or in
 the environment of the launch script: `PISDR_MAIN_TUNER=PISDRMAIN PISDR_ADSB_TUNER=PISDRADSB`.
 A device index (`0`, `1`) is accepted in place of a serial number, but indexes follow the
-USB ports.
+USB ports. Naming the XTR as the main tuner this way puts the V3 on ADS-B; the receiver
+then uses the XTR wherever it tunes and still goes to the V3 for HF, 24-65 MHz and the
+E4000's gap, and pauses on those while the map is open.
 
 A single dongle also works, of either kind or an RTL-SDR Blog V4 (which additionally needs
 `librtlsdr` 2.0.1 or newer; Trixie's is): it is then the receiver and the ADS-B dongle in
@@ -169,8 +173,8 @@ The layout follows [piHPSDR](https://github.com/dl1ycf/pihpsdr). From the top:
   `NB`, `NCH` (notch), `HPF`, `LPF`, `SQL`, `RDS`, `DEC` (data decoder), `BIAS` (the V3's bias tee), and `REC` at
   the right. A lit name is switched on (with its level, e.g. `NR5`), a grey one is off. Tap
   one to open Settings on that row; tap the mode for the mode page, `SQL` to put squelch on
-  the knob. The last line shows the band, the tuner that is receiving (`XTR`, `V3`, or
-  `V3 HF` for the V3 in direct sampling; section 5g), tuning step, zoom, what the knob
+  the knob. The last line shows the band, the tuner that is receiving (`V3`, `V3 HF` for
+  the V3 in direct sampling, or `XTR`; section 5g), tuning step, zoom, what the knob
   controls and the AF and RF levels; tap the band for the band page, the tuner for its
   Settings row, the others to step them. Scan, playback,
   timer and network status appear at the right of that line.
@@ -221,13 +225,13 @@ Destructive rows (clear lockouts, shut down) ask for a second press within 3 s.
 **Receiver rows.**
 
 - **Tuner** chooses the dongle: `AUTO` (the default; the value also names the one in use,
-  e.g. `AUTO · XTR`), `XTR only` or `V3 only`. Section 5g explains when to use the others.
+  e.g. `AUTO · V3`), `V3 only` or `XTR only`. Section 5g explains when to use the others.
   With one dongle attached the row just names it.
-- **RF gain** runs to 42 dB on the XTR and 49.6 dB on the V3; it is cut back when the
+- **RF gain** runs to 49.6 dB on the V3 and 42 dB on the XTR; it is cut back when the
   receiver moves to the XTR. It does nothing in `V3 HF` (direct sampling has no tuner), where
   **Tuner AGC** switches the RTL2832U's own digital AGC instead.
 - **Bias tee** puts 4.5 V on the **V3's** antenna socket, whichever dongle is receiving at
-  the time, and it stays on while the V3 decodes ADS-B. The XTR has no bias tee.
+  the time. The XTR has no bias tee, so the setting does nothing for the ADS-B antenna.
 - **Filter width** is remembered per mode: AM 4/6/8/10 kHz, NFM 7.5/10/12.5/16 kHz,
   USB/LSB 1.8–3.0 kHz, CW 200–1200 Hz (WFM is fixed). The mode picker shows each mode's
   current width and the passband marker on the spectrum follows it.
@@ -486,8 +490,8 @@ or an RTC).
 
 Settings → SYSTEM → **Network mode ▸** hands a dongle to `rtl_tcp` on port 1234, so SDR++,
 SDR#, GQRX or any RTL-TCP client on your network can use the radio. It is the dongle the
-receiver is on at that moment (the page names it), so tune to something the XTR covers
-first to serve the XTR, or to an HF band to serve the V3. The page shows the
+receiver is on at that moment (the page names it): the V3 anywhere up to 1766 MHz, the
+XTR if you tune above that first or set Tuner to `XTR only`. The page shows the
 address to connect to (for example `192.168.1.137:1234`). PiSDR's own receiver, scanner,
 recorder and decoders are paused meanwhile; **STOP** (or pushing the knob) shuts `rtl_tcp`
 down and gives the dongle back to PiSDR. The PPM correction is passed to `rtl_tcp`, and the
@@ -497,14 +501,14 @@ direct sampling (Q branch) itself. rtl_tcp has no password: only use it on a net
 ## 5f. ADS-B aircraft map
 
 **BAND → ADS-B 1090** (or Settings → SYSTEM → **ADS-B aircraft map ▸**) opens a radar
-display of the aircraft in range. The Mode S decoder, `dump1090`, runs on the **V3** while
+display of the aircraft in range. The Mode S decoder, `dump1090`, runs on the **XTR** while
 the map is open, and what happens to the receiver depends on where it was:
 
 | The receiver was | While the map is open | After BACK |
 |---|---|---|
-| on the XTR (most of VHF/UHF) | **keeps playing**; a recording carries on, and the record timer still starts one (a timer set for a frequency only the V3 tunes waits until the map is closed, then records what is left of its time) | unchanged |
-| on the V3 by choice (`V3 only`), on a frequency the XTR also tunes | moves to the XTR and keeps playing | moves back to the V3 |
-| on something only the V3 tunes (HF, 24-65 MHz, 1100-1250 MHz) | **paused**: receiver, scanner, recorder and decoders stop, as in network mode | resumes where it was |
+| on the V3 (anything from 500 kHz to 1766 MHz, HF and CB included) | **keeps playing**; a recording carries on, and the record timer still starts one (a timer set for a frequency above 1766 MHz waits until the map is closed, then records what is left of its time) | unchanged |
+| on the XTR by choice (`XTR only`), on a frequency the V3 also tunes | moves to the V3 and keeps playing | moves back to the XTR |
+| above 1766 MHz, which only the XTR tunes | **paused**: receiver, scanner, recorder and decoders stop, as in network mode | resumes where it was |
 
 The top line of the map says which it is: `radio 100.1000 MHz WFM`, or `receiver paused`.
 The knob and the keys belong to the map while it is open, so the receiver cannot be retuned
@@ -624,10 +628,16 @@ aircraft 100 nm away or more, the same antenna in a basement hears almost nothin
 signal is vertically polarised and a quarter wave is about 6.9 cm, so a telescopic whip or
 dipole wants each element at roughly that length, stood upright. The decoder runs the
 tuner at maximum gain; PiSDR's gain and AGC settings do not apply to it, the **PPM
-correction** does. The antenna for it goes on the **V3's** socket. `dump1090` has no
-bias-tee switch, so if **Bias tee** is ON PiSDR runs `rtl_biast` on the V3 before starting
-it (`rtl_biast` is normally part of the `rtl-sdr` package); if that tool is missing, an LNA
-powered through the coax stays off while the map is open.
+correction** does. The antenna for it goes on the **XTR's** socket. The XTR has no bias
+tee, so an amplified antenna or an LNA there needs its own supply; the **Bias tee** setting
+only concerns the V3. (If the decoder's dongle does have one, as a single V3 does, or a V3
+given the ADS-B job in section 2, PiSDR runs `rtl_biast` on it before starting `dump1090`
+when **Bias tee** is ON; `rtl_biast` is normally part of the `rtl-sdr` package.)
+
+An E4000 is not the best 1090 MHz receiver: it is a little less sensitive there than an
+R820T2 and 1090 MHz is close to the edge of its gap (section 2). If the map shows clearly
+fewer aircraft than a V3 on the same antenna, that is the reason, and section 2 says how
+to put the V3 on ADS-B instead.
 
 **The outlines** (coast, lakes, country borders, state / province lines) come from Natural
 Earth's public-domain 1:50m data in `software/config/outlines.npz`. That is drawn for
@@ -645,31 +655,30 @@ PiSDR's receiver listens through one dongle at a time and chooses it from the fr
 | Frequency | Dongle | Shown as |
 |---|---|---|
 | 500 kHz - 24 MHz | V3, direct sampling | `V3 HF` |
-| 24 - 65 MHz (CB, 10 m, 6 m) | V3 | `V3` |
-| 65 - 1100 MHz | XTR | `XTR` |
-| 1100 - 1250 MHz (the E4000's gap) | V3 | `V3` |
-| 1250 - 2300 MHz | XTR | `XTR` |
+| 24 - 1766 MHz (CB, 10 m, 6 m, all of VHF and UHF) | V3 | `V3` |
+| 1766 - 2300 MHz | XTR | `XTR` |
 
-Tuning across one of those edges closes one dongle and opens the other. That takes about a
-second, the audio drops out for it, and a recording or a played-back file is ended, the
-same as when the bias tee is switched. A message names the new tuner. A band scan that
-straddles an edge works, with that pause at the edge. The limits are `XTR_RANGES_HZ`,
-`V3_RANGE_HZ` and `V3_DIRECT_RANGE_HZ` in `software/pisdr/config.py` (section 2 shows how
-to measure the XTR's).
+Tuning across 24 MHz reopens the V3 with or without direct sampling; tuning across
+1766 MHz closes one dongle and opens the other. Either takes about a second, the audio
+drops out for it, and a recording or a played-back file is ended, the same as when the
+bias tee is switched. A message names the new tuner. A band scan that straddles an edge
+works, with that pause at the edge. The limits are `V3_RANGE_HZ`, `V3_DIRECT_RANGE_HZ` and
+`XTR_RANGES_HZ` in `software/pisdr/config.py` (section 2 shows how to measure the XTR's).
 
 Settings → RADIO → **Tuner** overrides the choice:
 
-- `XTR only` keeps the receiver off the V3, for instance to leave an antenna arrangement
-  alone. Where the XTR does not tune, a message says the frequency is outside its range and
-  you hear noise.
-- `V3 only` listens and scans on the V3 everywhere it tunes (up to 1766 MHz), which is the
-  way to compare the two dongles on one signal, or to use the V3's antenna. Opening the
-  ADS-B map still takes the V3 for the decoder (section 5f).
+- `V3 only` keeps the receiver off the XTR. Above 1766 MHz a message says the frequency is
+  outside its range and you hear noise.
+- `XTR only` listens and scans on the XTR everywhere it tunes (65-1100 MHz and
+  1250-2300 MHz), which is the way to compare the two dongles on one signal, or to use the
+  XTR's antenna. Below 65 MHz and in its gap it hears nothing and a message says so.
+  Opening the ADS-B map still takes the XTR for the decoder, and the receiver moves to the
+  V3 until the map is closed (section 5f).
 
 What the pair does **not** do yet: receive on both at once. The receiver is one flowgraph
-with one audio path, so the V3 cannot scan while the XTR plays, and HF (V3) cannot play
-while the ADS-B map (V3) is open. Doc 05 has what that would take. ADS-B is also only
-decoded while the map is open.
+with one audio path, so the XTR cannot scan while the V3 plays, and nothing above 1766 MHz
+can be received while the ADS-B map is open. Doc 05 has what that would take. ADS-B is
+also only decoded while the map is open.
 
 If a dongle cannot be opened (unplugged, or another program has it) the message is
 "Radio did not reopen: ..." and the receiver is silent; tuning to a frequency the other
@@ -751,18 +760,20 @@ fail the check. Typical results:
 | Symptom | Cause / fix |
 |---|---|
 | `rtl_test` says "usb_claim_interface error -6" | DVB kernel module grabbed the dongle; do the blacklist step and reboot |
-| Tuner shows `RTL` instead of `XTR` / `V3` | Only one dongle was found and its chip could not be read, or none was. Run `python3 -m pisdr --check` |
+| Tuner shows `RTL` instead of `V3` / `XTR` | Only one dongle was found and its chip could not be read, or none was. Run `python3 -m pisdr --check` |
 | The wrong dongle is the main tuner | Two dongles the chips cannot tell apart, or one whose chip could not be read at start-up: name them by serial number (section 2) |
-| "... MHz is outside the XTR tuner's range" | The Tuner row is on `XTR only`, or the ADS-B map has the V3 (the message then says so). Section 5g |
-| HF is weak, or full of signals that are not there | The V3 receives HF by direct sampling: its antenna socket needs an HF antenna (not the 1090 MHz one), strong medium-wave stations overload it, and above 14.4 MHz it has images. Doc 01 section 4 |
-| Nothing between 1100 and 1250 MHz, or noise just below 1100 MHz | The edges of the E4000's gap differ per unit: measure yours (section 2) and adjust `XTR_RANGES_HZ` |
+| "... MHz is outside the V3 tuner's range" | Above 1766 MHz with the Tuner row on `V3 only`, or while the ADS-B map has the XTR (the message then says so). Section 5g |
+| "... MHz is outside the XTR tuner's range" | The Tuner row is on `XTR only` and the frequency is below 65 MHz or in the E4000's gap. Section 5g |
+| The ADS-B map shows fewer aircraft than it used to | The decoder is on the XTR now: its E4000 is less sensitive at 1090 MHz than the V3 and cannot power an amplified antenna. Check that the 1090 MHz antenna is on the XTR's socket, then see sections 2 and 5f |
+| HF is weak, or full of signals that are not there | The V3 receives HF by direct sampling: its antenna socket needs an HF antenna (not a VHF whip), strong medium-wave stations overload it, and above 14.4 MHz it has images. Doc 01 section 4 |
+| With `XTR only`: nothing between 1100 and 1250 MHz, or noise just below 1100 MHz | The edges of the E4000's gap differ per unit: measure yours (section 2) and adjust `XTR_RANGES_HZ` |
 | Audio stutters | Reduce `SAMPLE_RATE` in `pisdr/config.py` to 1.024e6, or `FFT_FPS` to 15 |
 | App starts on the HDMI monitor instead of the DSI | Disconnect HDMI, or set `PISDR_SCREEN=DSI-1` in the `.desktop` `Exec` line |
 | "Undervoltage detected" in `dmesg` | Power supply or cable; see doc 01 section 5 |
 | Brightness row says "no access" | Re-run `install.sh` (udev rule + `video` group) and reboot |
 | "Radio did not reopen" after changing tuner, bias tee, network mode or the ADS-B map | Something else holds that dongle (`rtl_tcp`, another SDR program), or it was unplugged. Close it, then tune to a frequency the other dongle handles and back, or enter/leave network mode, to retry |
 | "No ADS-B decoder (dump1090) found" when picking ADS-B 1090 | The decoder is not installed: re-run `install.sh` with the Pi online, or build it by hand (section 5f). With one dongle the band is still tuned as an ordinary band |
-| "dump1090-fa stopped: ..." on, or instead of, the ADS-B map | The decoder could not open the dongle or lost it; the text after the colon is its own last message. Usually another program holds the V3 - in particular a `dump1090` / `readsb` / `piaware` **service** from an earlier install (`systemctl status dump1090-fa readsb`; `sudo systemctl disable --now <name>`). BACK returns to the radio |
+| "dump1090-fa stopped: ..." on, or instead of, the ADS-B map | The decoder could not open the dongle or lost it; the text after the colon is its own last message. Usually another program holds the XTR - in particular a `dump1090` / `readsb` / `piaware` **service** from an earlier install (`systemctl status dump1090-fa readsb`; `sudo systemctl disable --now <name>`). BACK returns to the radio |
 | ADS-B map stays on "Listening on 1090 MHz..." | No aircraft heard: check the antenna (section 5f), move it to a window, and remember that a quiet sky at night is normal away from airways |
 | ADS-B map lists aircraft that never appear on the plot | They have not sent a position the decoder could use yet (it normally needs two position messages), or they do not send one at all (older Mode S transponders) |
 | "Not enough free space to record" / "Recording stopped - storage is almost full" | Less than 200 MB (start) or 100 MB (running) free; delete recordings on the Recordings page |

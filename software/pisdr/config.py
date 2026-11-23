@@ -50,9 +50,9 @@ GAIN_MIN_DB = 0.0
 GAIN_MAX_DB = 49.6           # R820T2 range reported by librtlsdr (the E4000 stops at 42 dB)
 GAIN_STEP_DB = 1.0
 
-# Tuners. The receiver has two dongles: a Nooelec NESDR SMArt XTR (E4000 tuner), which is
-# the main tuner, and an RTL-SDR Blog V3 (R820T2), which decodes ADS-B on 1090 MHz and
-# receives what the E4000 cannot: HF by direct sampling, 24-65 MHz and the E4000's gap.
+# Tuners. The receiver has two dongles: an RTL-SDR Blog V3 (R820T2), which is the main
+# tuner (HF by direct sampling, then 24-1766 MHz), and a Nooelec NESDR SMArt XTR (E4000),
+# which decodes ADS-B on 1090 MHz and receives what lies above the V3's range.
 # Which dongle is which is read from its tuner chip (radio/tuners.py). To force it, give a
 # serial number or a device index here, or in PISDR_MAIN_TUNER / PISDR_ADSB_TUNER.
 MAIN_TUNER = os.environ.get("PISDR_MAIN_TUNER", "")
@@ -158,7 +158,7 @@ DECODER_TEXT_MAX = 40        # decoded lines kept for the strip on the main page
 # Network mode: hand the receiver's dongle to rtl_tcp so SDR++ / SDR# / GQRX can use it over Wi-Fi.
 RTL_TCP_PORT = 1234
 
-# ADS-B map: a dump1090-family decoder runs on the V3 (or borrows the only dongle there is)
+# ADS-B map: a dump1090-family decoder runs on the XTR (or borrows the only dongle there is)
 # and writes the aircraft it is tracking to aircraft.json once a second. First program
 # found on PATH is used.
 ADSB_FREQ_HZ = 1_090_000_000

@@ -322,7 +322,7 @@ class Backend(QObject):
 
         With two dongles the receiver keeps playing on the main one. It is only paused when
         the decoder's dongle is the one it needs: there is just one, or the VFO is where
-        only the second dongle tunes (HF).
+        only the second dongle tunes (above 1766 MHz).
         """
         if self.state.adsb_mode:
             return None

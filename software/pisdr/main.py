@@ -75,7 +75,7 @@ def check_radio() -> int:
             raise RuntimeError(f"cannot tell what dongle #{unknown[0].index} is (its tuner chip could not be "
                                "read - is another program using it?). Set PISDR_MAIN_TUNER / PISDR_ADSB_TUNER "
                                "to serial numbers if this persists (doc 02 s.2)")
-        return f"main tuner {lineup.main.spec.key} (#{lineup.main.index}), ADS-B and HF {lineup.aux.spec.key} (#{lineup.aux.index})"
+        return f"main tuner {lineup.main.spec.key} (#{lineup.main.index}), ADS-B {lineup.aux.spec.key} (#{lineup.aux.index})"
 
     def import_gr():
         from gnuradio import gr

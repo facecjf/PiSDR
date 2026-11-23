@@ -7,7 +7,7 @@ carrier wherever the VFO happens to be so the S-meter moves. No audio is generat
 
 RDS, data decoders, playback, network mode and ADS-B traffic are faked just enough to
 exercise the UI. So are the two dongles of the real radio: the simulator moves between a
-pretend XTR and a pretend V3 as the frequency asks, and its ADS-B map leaves the receiver
+pretend V3 and a pretend XTR as the frequency asks, and its ADS-B map leaves the receiver
 running the way the second dongle does. Pass ``lineup=Lineup()`` for a one-dongle radio.
 """
 from __future__ import annotations
@@ -25,8 +25,8 @@ from .backend import Backend
 from .cw_decoder import MORSE_TABLE, MorseDecoder
 from .tuners import V3, XTR, Dongle, Lineup
 
-SIM_LINEUP = Lineup(Dongle(0, XTR, "Nooelec", "SMArt XTR (simulated)", "SIM-XTR"),
-                    Dongle(1, V3, "RTLSDRBlog", "Blog V3 (simulated)", "SIM-V3"))
+SIM_LINEUP = Lineup(Dongle(0, V3, "RTLSDRBlog", "Blog V3 (simulated)", "SIM-V3"),
+                    Dongle(1, XTR, "Nooelec", "SMArt XTR (simulated)", "SIM-XTR"))
 
 _SIM_CW_TEXT = "CQ CQ CQ DE PISDR PISDR K "
 _SIM_CW_WPM = 18

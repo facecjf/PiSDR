@@ -52,7 +52,7 @@ def _sim(state, lineup=None):
 
 @pytest.fixture
 def sim(state):
-    """The simulator as it comes: an XTR and a V3."""
+    """The simulator as it comes: a V3 (main tuner) and an XTR."""
     yield from _sim(state)
 
 
@@ -218,13 +218,13 @@ def radio(state, monkeypatch):
 
 
 # The dongles the other way round from the simulator's, so that nothing can lean on "main is #0".
-TWO_DONGLES = tuners.Lineup(tuners.Dongle(1, tuners.XTR, "Nooelec", "SMArt XTR v5", "00000001"),
-                            tuners.Dongle(0, tuners.V3, "RTLSDRBlog", "Blog V3", "00000001"))
+TWO_DONGLES = tuners.Lineup(tuners.Dongle(1, tuners.V3, "RTLSDRBlog", "Blog V3", "00000001"),
+                            tuners.Dongle(0, tuners.XTR, "Nooelec", "SMArt XTR v5", "00000001"))
 
 
 @pytest.fixture
 def radio2(state, monkeypatch):
-    """The GNU Radio back end on the real radio's pair: XTR (device 1) and V3 (device 0)."""
+    """The GNU Radio back end on the real radio's pair: V3 (device 1, main) and XTR (device 0)."""
     yield from _radio(state, monkeypatch, TWO_DONGLES)
 
 

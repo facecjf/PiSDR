@@ -1,4 +1,4 @@
-"""GNU Radio backend for the two RTL-SDR dongles (NESDR SMArt XTR and RTL-SDR Blog V3).
+"""GNU Radio backend for the two RTL-SDR dongles (RTL-SDR Blog V3 and NESDR SMArt XTR).
 
 Flowgraph::
 
