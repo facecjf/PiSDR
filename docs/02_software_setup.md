@@ -44,9 +44,11 @@ device 1 depends on the USB ports and does not matter: PiSDR reads the tuner chi
 when it starts and gives the R820T the main receiver and the E4000 ADS-B.
 
 On the E4000 `rtl_test -t` goes on to measure what that particular chip tunes and prints
-two lines like `E4K range: 52 to 2210 MHz` and `E4K L-band gap: 1105 to 1242 MHz`. If your
-numbers are far from 65-2300 MHz and 1100-1250 MHz, put yours into `XTR_RANGES_HZ` in
-`software/pisdr/config.py`, a little inside what was measured. (On the R820T the same
+two lines like `E4K range: 52 to 2205 MHz` and `E4K L-band gap: 1103 to 1271 MHz` (those
+are from the XTR this radio was built with, and `XTR_RANGES_HZ` in
+`software/pisdr/config.py` is set from them: 65-1100 MHz and 1275-2200 MHz). If your
+numbers are far from these, put yours there, a little inside what was measured, and the
+top one into `FREQ_MAX` as well. (On the R820T the same
 option only says there is no E4000 to test.) The start of the gap matters more than the
 rest: the XTR decodes ADS-B on 1090 MHz, so a gap that starts below about 1095 MHz is a
 reason to give the jobs the other way round, as follows.
@@ -656,7 +658,7 @@ PiSDR's receiver listens through one dongle at a time and chooses it from the fr
 |---|---|---|
 | 500 kHz - 24 MHz | V3, direct sampling | `V3 HF` |
 | 24 - 1766 MHz (CB, 10 m, 6 m, all of VHF and UHF) | V3 | `V3` |
-| 1766 - 2300 MHz | XTR | `XTR` |
+| 1766 - 2200 MHz | XTR | `XTR` |
 
 Tuning across 24 MHz reopens the V3 with or without direct sampling; tuning across
 1766 MHz closes one dongle and opens the other. Either takes about a second, the audio
@@ -670,7 +672,7 @@ Settings → RADIO → **Tuner** overrides the choice:
 - `V3 only` keeps the receiver off the XTR. Above 1766 MHz a message says the frequency is
   outside its range and you hear noise.
 - `XTR only` listens and scans on the XTR everywhere it tunes (65-1100 MHz and
-  1250-2300 MHz), which is the way to compare the two dongles on one signal, or to use the
+  1275-2200 MHz), which is the way to compare the two dongles on one signal, or to use the
   XTR's antenna. Below 65 MHz and in its gap it hears nothing and a message says so.
   Opening the ADS-B map still takes the XTR for the decoder, and the receiver moves to the
   V3 until the map is closed (section 5f).
@@ -766,8 +768,9 @@ fail the check. Typical results:
 | "... MHz is outside the XTR tuner's range" | The Tuner row is on `XTR only` and the frequency is below 65 MHz or in the E4000's gap. Section 5g |
 | The ADS-B map shows fewer aircraft than it used to | The decoder is on the XTR now: its E4000 is less sensitive at 1090 MHz than the V3 and cannot power an amplified antenna. Check that the 1090 MHz antenna is on the XTR's socket, then see sections 2 and 5f |
 | HF is weak, or full of signals that are not there | The V3 receives HF by direct sampling: its antenna socket needs an HF antenna (not a VHF whip), strong medium-wave stations overload it, and above 14.4 MHz it has images. Doc 01 section 4 |
-| With `XTR only`: nothing between 1100 and 1250 MHz, or noise just below 1100 MHz | The edges of the E4000's gap differ per unit: measure yours (section 2) and adjust `XTR_RANGES_HZ` |
-| Audio stutters | Reduce `SAMPLE_RATE` in `pisdr/config.py` to 1.024e6, or `FFT_FPS` to 15 |
+| With `XTR only`: nothing between 1100 and 1275 MHz, or noise just below 1100 MHz | The edges of the E4000's gap differ per unit: measure yours (section 2) and adjust `XTR_RANGES_HZ` |
+| Audio breaks up or crackles | First rule out heat: `vcgencmd measure_temp` and `vcgencmd get_throttled` (anything but `0x0` means the Pi has been throttling or short of volts). Noise reduction and the noise blanker are the only parts of the audio path written in Python, so switch them off to see whether it is them. The spectrum rate and the aircraft map should no longer matter (the spectrum is computed outside Python and the map only redraws its aircraft once a second); if they still do, say so in an issue. Last resort: `SAMPLE_RATE` in `pisdr/config.py` to 1.024e6 |
+| The first start after an update takes several seconds longer | GNU Radio is working out how to do the FFTs for the seven zoom levels and saves the result in `~/.cache/gnuradio/fftw_wisdom`; later starts use it |
 | App starts on the HDMI monitor instead of the DSI | Disconnect HDMI, or set `PISDR_SCREEN=DSI-1` in the `.desktop` `Exec` line |
 | "Undervoltage detected" in `dmesg` | Power supply or cable; see doc 01 section 5 |
 | Brightness row says "no access" | Re-run `install.sh` (udev rule + `video` group) and reboot |

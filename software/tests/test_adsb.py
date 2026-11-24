@@ -1012,6 +1012,47 @@ def test_trails_grow_stay_bounded_and_break_on_a_jump(window, qapp, chart):
     assert chart.radar._overlay()[0] == "Listening on 1090 MHz..."
 
 
+def test_the_sweep_copies_the_aircraft_and_only_a_change_draws_them(window, qapp, chart, monkeypatch):
+    """Drawn 12 times a second, the trails kept the GUI busy enough on the Pi to break up the audio."""
+    radar, state = chart.radar, window.state
+    drawn: list[int] = []
+    draw_aircraft, draw_trails = radar._paint_aircraft, radar._paint_trails
+    monkeypatch.setattr(radar, "_paint_aircraft", lambda p: (drawn.append(1), draw_aircraft(p))[1])
+    monkeypatch.setattr(radar, "_paint_trails", lambda p: (drawn.append(2), draw_trails(p))[1])
+
+    def painted() -> list[int]:
+        del drawn[:]
+        radar.grab()
+        return list(drawn)
+
+    for _ in range(3):
+        window.backend._traffic._t0 -= 1.0
+        window.backend.poll_adsb()                     # (so that there are trails)
+    assert painted() == [2, 1]
+    before = radar.grab().toImage()
+    for _ in range(5):
+        radar._advance_sweep()
+        assert painted() == [], "a sweep step drew the aircraft again"
+    assert radar.grab().toImage() != before, "the sweep did not move"
+    assert len(radar._hits) >= 4, "taps must still find the aircraft"
+    window.backend.poll_adsb()                         # the once-a-second update
+    assert painted() == [2, 1] and painted() == []
+    icao, x, y = radar._hits[0]
+    radar.picked.emit(icao)                            # a tap: the selection is drawn
+    assert chart.selected == icao and painted() == [2, 1]
+    state.cycle_adsb_labels()
+    assert painted() == [2, 1]
+    state.toggle_adsb_trails()
+    assert painted() == [1]
+    state.toggle_adsb_trails()
+    state.step_adsb_range(-1)
+    assert painted() == [2, 1]
+    radar.resize(radar.width() - 20, radar.height())
+    assert painted() == [2, 1]
+    state.adsb_error = "dump1090-fa stopped: lost the dongle"      # read at every repaint, not cached
+    assert painted() == [] and radar._overlay()[0].startswith("dump1090-fa stopped")
+
+
 def test_map_without_a_location_centres_on_the_traffic(window, qapp):
     window._enter_adsb()
     page = window.adsb_page

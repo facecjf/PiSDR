@@ -2,7 +2,7 @@
 
 Flowgraph::
 
-    osmosdr.source (1.92 MS/s) --+--> FftSink -> spectrum_ready  (bigger FFT + crop when zoomed)
+    osmosdr.source (1.92 MS/s) --+--> SpectrumTap (C++ FFT chains) ... polled -> spectrum_ready
                                  |
                                  +--> freq_xlating_fir (decim 8 -> 240 kS/s, VFO to 0 Hz)
                                         |
@@ -19,8 +19,11 @@ Flowgraph::
 
     WavPlayer (playback) replaces the filter chain as the input of audio_bus while playing.
 
-[NB]/[NR] are Python blocks and are only wired in while their level is > 0, so the default
-audio path never waits on the Python GIL (which the waterfall painter holds a lot).
+No Python block sits on the sample stream or in the default audio path, so the radio never
+waits for the Python interpreter lock, which the GUI thread holds whenever it is painting.
+The spectrum is computed by GNU Radio's own blocks and fetched by a timer in the GUI thread
+(see spectrum_tap.py for what happened when it was a Python sink). [NB]/[NR] are Python
+blocks and are only wired in while their level is > 0.
 
 One dongle feeds this graph at a time. Moving to the other one, switching the V3 between
 its tuner and direct sampling (HF), changing the bias tee and entering network mode all
@@ -60,8 +63,8 @@ from .backend import Backend
 from .cw_decoder import CwEnvelopeSink
 from .demod import build_all
 from .audio_out import open_sink
-from .fft_sink import FftSink
 from .gr_extras import DecoderFeed, RdsChain, WavPlayer, decoder_resampler
+from .spectrum_tap import SpectrumTap
 
 # Moved from gnuradio.blocks to gnuradio.analog in GNU Radio 3.8+.
 try:
@@ -88,6 +91,8 @@ class GnuRadioBackend(Backend):
         self._poll = QTimer(self)
         self._poll.setInterval(config.SIGNAL_POLL_MS)
         self._poll.timeout.connect(self._poll_level)
+        self._spectrum_poll = QTimer(self)
+        self._spectrum_poll.timeout.connect(self._poll_spectrum)
 
     # ------------------------------------------------------------------ construction
     def _make_source(self) -> osmosdr.source:
@@ -107,7 +112,8 @@ class GnuRadioBackend(Backend):
         tb = self.tb
         self.player: WavPlayer | None = None
         self.src = self._make_source()
-        self.fft = FftSink(config.FFT_SIZE, self.state.fft_fps, self._on_fft)
+        self.spectrum = SpectrumTap(tb, self.src, config.FFT_SIZE, config.SAMPLE_RATE,
+                                    config.SPECTRUM_ZOOMS, self.state.fft_fps)
         xlate_taps = firdes.low_pass(1.0, config.SAMPLE_RATE, config.IF_RATE * 0.45, config.IF_RATE * 0.1)
         self.xlate = gr_filter.freq_xlating_fir_filter_ccf(XLATE_DECIM, xlate_taps, 0.0, config.SAMPLE_RATE)
         self.probe = _probe_avg_mag_sqrd_c(0, 0.01)
@@ -132,7 +138,6 @@ class GnuRadioBackend(Backend):
         except OSError:
             pass
 
-        tb.connect(self.src, self.fft)
         tb.connect(self.src, self.xlate)
         tb.connect(self.xlate, self.probe)
         tb.connect(self.xlate, self.sel_in)
@@ -189,6 +194,7 @@ class GnuRadioBackend(Backend):
 
     def _teardown(self) -> None:
         self._poll.stop()
+        self._spectrum_poll.stop()
         if self.state.recording:
             self.state.set_recording(False)
             self._hw_set_recording(False)
@@ -217,9 +223,14 @@ class GnuRadioBackend(Backend):
             self.radio_down = True
             return f"Radio did not reopen: {last}"
         self.radio_down = False
+        self._run()
+        return None
+
+    def _run(self) -> None:
         self.tb.start()
         self._poll.start()
-        return None
+        self._hw_set_fft_fps(self.state.fft_fps)
+        self._hw_set_spectrum_enabled(self._spectrum_on)
 
     def _on_cw_text(self, text: str) -> None:
         # Radio thread -> Qt thread via queued signal.
@@ -227,10 +238,6 @@ class GnuRadioBackend(Backend):
 
     def _on_rds(self, field: str, text: str) -> None:
         self.rds_data.emit(field, text)
-
-    def _on_fft(self, db: np.ndarray) -> None:
-        # Called from the GNU Radio scheduler thread; Qt queues it to the GUI thread.
-        self.spectrum_ready.emit(db)
 
     def _on_play_done(self) -> None:
         self.playback_finished.emit()
@@ -241,8 +248,7 @@ class GnuRadioBackend(Backend):
 
     # ------------------------------------------------------------------ hooks
     def _hw_start(self) -> None:
-        self.tb.start()
-        self._poll.start()
+        self._run()
         self.status.emit(f"{self.source.dongle.spec.name} running")
         if self._bias and not self.source.dongle.spec.bias_tee:
             # The bias tee is on a dongle this graph has not opened: switch it on from outside.
@@ -263,6 +269,7 @@ class GnuRadioBackend(Backend):
 
     def _hw_stop(self) -> None:
         self._poll.stop()
+        self._spectrum_poll.stop()
         self._stop_rtl_tcp()
         self.adsb.stop()
         if self.tb is not None:
@@ -354,16 +361,22 @@ class GnuRadioBackend(Backend):
             self._record_path = None
 
     def _hw_set_fft_fps(self, fps: int) -> None:
-        self.fft.set_fps(fps)
+        self.spectrum.set_fps(fps)
+        self._spectrum_poll.setInterval(int(1000 / max(1, fps)))
 
     def _hw_set_view(self, center_hz: float, span_hz: float, zoom: int) -> None:
         size = config.FFT_SIZE * zoom
         low_edge = self.center_hz - self.span_hz / 2
         start = int(round((center_hz - span_hz / 2 - low_edge) / self.span_hz * size))
-        self.fft.set_view(size, start)
+        self.spectrum.set_view(size, start)
 
     def _hw_set_spectrum_enabled(self, on: bool) -> None:
-        self.fft.set_enabled(on)
+        """Off while the waterfall is not on screen: no FFTs are computed and nothing is polled."""
+        self.spectrum.set_enabled(on)
+        if on and self.tb is not None:
+            self._spectrum_poll.start()
+        else:
+            self._spectrum_poll.stop()
 
     def _hw_set_dsp(self) -> None:
         self._apply_dsp()
@@ -527,7 +540,12 @@ class GnuRadioBackend(Backend):
     def _hw_adsb_poll(self) -> tuple[list, int, str]:
         return self.adsb.read()
 
-    # ------------------------------------------------------------------ S-meter
+    # ------------------------------------------------------------------ spectrum, S-meter
+    def _poll_spectrum(self) -> None:
+        db = self.spectrum.read()
+        if db is not None:
+            self.spectrum_ready.emit(db)
+
     def _poll_level(self) -> None:
         level = self.probe.level()
         db = 10.0 * np.log10(max(level, 1e-12)) + self.state.smeter_cal_db

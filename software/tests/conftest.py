@@ -41,6 +41,7 @@ from pisdr import config  # noqa: E402
 from pisdr.qt import QtWidgets  # noqa: E402
 
 needs_fake_gr = pytest.mark.skipif(not fakegr.is_fake(), reason="uses the GNU Radio stand-in")
+needs_real_gr = pytest.mark.skipif(fakegr.is_fake(), reason="needs GNU Radio itself")
 
 
 @pytest.fixture(scope="session")

@@ -221,6 +221,8 @@ class RadarView(QtWidgets.QWidget):
         self._hits: list[tuple[str, float, float]] = []
         self._static: QtGui.QPixmap | None = None
         self._static_key: tuple | None = None
+        self._traffic: QtGui.QPixmap | None = None    # readouts, trails and aircraft: see redraw()
+        self._traffic_key: tuple | None = None
         self._sweep_deg = 0.0
         self._sweep = QtCore.QTimer(self)
         self._sweep.setInterval(80)
@@ -266,6 +268,17 @@ class RadarView(QtWidgets.QWidget):
 
     def _advance_sweep(self) -> None:
         self._sweep_deg = (self._sweep_deg + 360.0 * self._sweep.interval() / 1000.0 / config.ADSB_SWEEP_S) % 360.0
+        self.update()                                  # the layers are kept: only the sweep has moved
+
+    def redraw(self) -> None:
+        """Call after changing anything that is drawn, instead of ``update()``.
+
+        The sweep repaints the map 12 times a second; the aircraft change once a second.
+        Drawing them (and their trails, which grow to thousands of points) every time kept
+        the GUI thread busy enough on the Pi to disturb the receiver, so they are drawn
+        once into a layer that the sweep's repaints only copy.
+        """
+        self._traffic = None
         self.update()
 
     # ------------------------------------------------------------------ geometry
@@ -310,25 +323,44 @@ class RadarView(QtWidgets.QWidget):
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
         self._paint_sweep(p)
-        self._paint_corners(p)                         # under the aircraft: those are what the map is for
-        self._hits = []
-        if self.centre is not None:
-            if self.state.adsb_trails:
-                self._paint_trails(p)
-            self._paint_aircraft(p)
+        p.drawPixmap(0, 0, self._traffic_layer())
         self._paint_overlay(p)
         p.end()
 
+    def _layer(self, fill: QtGui.QColor) -> QtGui.QPixmap:
+        ratio = self.devicePixelRatioF()
+        layer = QtGui.QPixmap(max(1, round(self.width() * ratio)), max(1, round(self.height() * ratio)))
+        layer.setDevicePixelRatio(ratio)
+        layer.fill(fill)
+        return layer
+
+    def _traffic_layer(self) -> QtGui.QPixmap:
+        """Corner readouts, trails and aircraft on a transparent layer, over the sweep."""
+        s = self.state
+        key = (self.width(), self.height(), self.devicePixelRatioF(), style.CURRENT_THEME,
+               s.adsb_range_nm, s.adsb_labels, s.adsb_trails)
+        if key != self._traffic_key or self._traffic is None:
+            self._traffic_key = key
+            self._traffic = self._layer(QtGui.QColor(0, 0, 0, 0))
+            p = QtGui.QPainter(self._traffic)
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            p.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
+            self._paint_corners(p)                     # under the aircraft: those are what the map is for
+            self._hits = []
+            if self.centre is not None:
+                if s.adsb_trails:
+                    self._paint_trails(p)
+                self._paint_aircraft(p)
+            p.end()
+        return self._traffic
+
     def _static_layer(self) -> QtGui.QPixmap:
         """Everything that only changes with the view: outlines, rings and compass letters."""
-        ratio = self.devicePixelRatioF()
         key = (self.centre, self.centre_source == "traffic", self.state.adsb_range_nm,
-               self.width(), self.height(), ratio, style.CURRENT_THEME)
+               self.width(), self.height(), self.devicePixelRatioF(), style.CURRENT_THEME)
         if key != self._static_key or self._static is None:
             self._static_key = key
-            self._static = QtGui.QPixmap(max(1, round(self.width() * ratio)), max(1, round(self.height() * ratio)))
-            self._static.setDevicePixelRatio(ratio)
-            self._static.fill(QtGui.QColor(style.BG))
+            self._static = self._layer(QtGui.QColor(style.BG))
             p = QtGui.QPainter(self._static)
             p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
             p.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
@@ -416,13 +448,14 @@ class RadarView(QtWidgets.QWidget):
     def _paint_trails(self, p: QtGui.QPainter) -> None:
         p.setBrush(Qt.BrushStyle.NoBrush)
         shown = {ac.icao: ac for ac in self.aircraft}
+        cx, cy, scale = self.width() / 2.0, self.height() / 2.0, self.scale()
         for icao, trail in self.trails.items():
             if len(trail) < 2 or icao not in shown:
                 continue
             points = np.asarray(trail, dtype=float)
             east, north = adsb.project(self.centre[0], self.centre[1], points[:, 0], points[:, 1])
-            line = QtGui.QPolygonF([QtCore.QPointF(*self.to_screen(float(e), float(n)))
-                                    for e, n in zip(east, north)])
+            line = QtGui.QPolygonF([QtCore.QPointF(x, y) for x, y in zip((cx + east * scale).tolist(),
+                                                                         (cy - north * scale).tolist())])
             chosen = icao == self.selected
             p.setPen(QtGui.QPen(_colour(style.ACCENT_2 if chosen else altitude_colour(shown[icao]), 230 if chosen else 120),
                                 1.8 if chosen else 1.2))
@@ -826,7 +859,7 @@ class AdsbPage(Page):
                 self.refresh()
         elif field in ("adsb_range_nm", "adsb_labels", "adsb_trails"):
             self.radar.sync_buttons()
-            self.radar.update()
+            self.radar.redraw()
 
     def refresh(self) -> None:
         """Take in the newest aircraft list: centre, distances, trails, then redraw."""
@@ -919,7 +952,7 @@ class AdsbPage(Page):
 
     def _show(self) -> None:
         self.radar.selected = self.shown
-        self.radar.update()
+        self.radar.redraw()
         self.panel.show_flight(self.shown_aircraft(), auto=not self.selected)
         self.flight_list.show_flights(self.listing(), self.shown, self.sort, self.list_page)
         self.list_page = self.flight_list.page

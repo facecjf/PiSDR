@@ -8,7 +8,7 @@
 | 2 | Power supply 5.1 V / 3 A USB-C (official Pi 4 PSU) | 1 | Cheaper supplies sag under the Pi + screen + two SDRs |
 | 3 | microSD 16 GB or larger, A1/A2 class | 1 | |
 | 4 | RTL-SDR Blog V3 | 1 | **Main tuner.** R820T2 tuner 24-1766 MHz, 500 kHz-24 MHz by direct sampling, 1 ppm TCXO, SMA female, 4.5 V software bias tee. Aluminium case about 70 x 27 x 12 mm (**measure yours**) |
-| 4a | Nooelec NESDR SMArt XTR | 1 | **ADS-B on 1090 MHz**, and reception above 1766 MHz. Elonics E4000, about 65-2300 MHz with a gap around 1100-1250 MHz, 0.5 ppm TCXO, SMA female, no bias tee. Aluminium case (**measure yours**) |
+| 4a | Nooelec NESDR SMArt XTR | 1 | **ADS-B on 1090 MHz**, and reception above 1766 MHz. Elonics E4000, about 65-2200 MHz with a gap around 1100-1275 MHz, 0.5 ppm TCXO, SMA female, no bias tee. Aluminium case (**measure yours**) |
 | 5 | USB-A male to USB-A female extension, 15-30 cm, shielded, with ferrite | 2 | One per dongle. Keeps them off the Pi's USB stack, away from the display driver and apart from each other (side by side in the Pi's ports they do not fit, and they heat each other) |
 | 6 | Hosyond 7" IPS capacitive DSI touchscreen 800x480 (Amazon B0D3QB7X4Z) | 1 | Module 164.89 x 102.00 x 12.25 mm, active area 154.68 x 87.02 mm, 5 V 510 mA max |
 | 7 | EC11 rotary encoder module, 5 pins (GND, +, SW, DT, CLK) | 1 | Also sold as "KY-040". PCB about 32 x 19 mm, 20-step, D-shaft or knurled 6 mm shaft (**measure**) |
@@ -121,7 +121,7 @@ GPIO2/3 stay free. Pins 31-40 remain available for a fan tach/PWM or future keys
 |---|---|---|
 | Job | main tuner: listening and scanning, 500 kHz to 1766 MHz | ADS-B on 1090 MHz; the receiver's tuner above 1766 MHz |
 | Tuner chip | Rafael Micro R820T2 | Elonics E4000 |
-| Tuner range | 24-1766 MHz | about 65-2300 MHz, gap around 1100-1250 MHz |
+| Tuner range | 24-1766 MHz | about 65-2200 MHz, gap around 1100-1275 MHz |
 | Below 24 MHz | 500 kHz-24 MHz by direct sampling (Q branch) | nothing |
 | RF gain | 0-49.6 dB (no effect in direct sampling) | 0-42 dB |
 | Bias tee | 4.5 V, switched in software | none |
@@ -129,10 +129,10 @@ GPIO2/3 stay free. Pins 31-40 remain available for a fan tach/PWM or future keys
 
 - The application tells the two apart by their tuner chips and decides which one receives
   from the frequency (doc 02 section 5g). **Which USB port each is in does not matter.**
-- The E4000's range is nominal and varies a little from unit to unit; the edges of the gap
-  in particular. `XTR_RANGES_HZ` in `software/pisdr/config.py` holds the numbers the
-  application goes by. If yours tunes 1100-1250 MHz anyway, or goes deaf before 1100 MHz,
-  change them there.
+- The E4000's range varies a little from unit to unit; the edges of the gap in particular.
+  `XTR_RANGES_HZ` in `software/pisdr/config.py` holds the numbers the application goes by,
+  taken from what `rtl_test -t` measured on the XTR in this radio (52-2205 MHz, gap
+  1103-1271 MHz). If yours measures differently, change them there (doc 02 section 2).
 - **The antennas follow the jobs.** The 1090 MHz antenna goes on the **XTR's** socket and
   the antenna you listen with on the **V3's**. If the dongles had the jobs the other way
   round before, swap the two antenna leads.

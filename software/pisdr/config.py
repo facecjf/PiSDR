@@ -44,7 +44,7 @@ SAMPLE_RATE = 1_920_000      # RTL-SDR sample rate; 1.92 MS/s divides cleanly to
 IF_RATE = 240_000            # after the translating filter (SAMPLE_RATE / 8)
 AUDIO_RATE = 48_000          # IF_RATE / 5
 FREQ_MIN = 500_000           # bottom of the V3's direct-sampling range
-FREQ_MAX = 2_300_000_000     # top of the XTR's E4000
+FREQ_MAX = 2_200_000_000     # top of the XTR's E4000
 DEFAULT_GAIN_DB = 30.0
 GAIN_MIN_DB = 0.0
 GAIN_MAX_DB = 49.6           # R820T2 range reported by librtlsdr (the E4000 stops at 42 dB)
@@ -57,7 +57,9 @@ GAIN_STEP_DB = 1.0
 # serial number or a device index here, or in PISDR_MAIN_TUNER / PISDR_ADSB_TUNER.
 MAIN_TUNER = os.environ.get("PISDR_MAIN_TUNER", "")
 ADSB_TUNER = os.environ.get("PISDR_ADSB_TUNER", "")
-XTR_RANGES_HZ = ((65_000_000, 1_100_000_000), (1_250_000_000, 2_300_000_000))   # the gap varies a little per unit
+# What this radio's XTR tunes. `rtl_test -t` measured 52-2205 MHz with a gap from 1103 to
+# 1271 MHz on it; these are a little inside that. The edges differ from unit to unit.
+XTR_RANGES_HZ = ((65_000_000, 1_100_000_000), (1_275_000_000, 2_200_000_000))
 XTR_GAIN_MAX_DB = 42.0
 V3_RANGE_HZ = (24_000_000, 1_766_000_000)
 V3_DIRECT_RANGE_HZ = (500_000, 24_000_000)   # direct sampling on the Q branch, tuner bypassed

@@ -5,7 +5,7 @@ The radio has two dongles with different tuner chips:
 * **RTL-SDR Blog V3** (Rafael Micro R820T2): the main tuner. 24-1766 MHz and, by direct
   sampling on the Q branch, 500 kHz-24 MHz. It has the bias tee.
 * **Nooelec NESDR SMArt XTR** (Elonics E4000): decodes ADS-B on 1090 MHz. It tunes about
-  65-2300 MHz with a gap around 1100-1250 MHz, so it also receives what lies above the
+  65-2200 MHz with a gap around 1100-1275 MHz, so it also receives what lies above the
   V3's 1766 MHz. No HF, no bias tee.
 
 The dongles are told apart by their tuner chip, which librtlsdr reports when it opens a

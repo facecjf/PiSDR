@@ -13,7 +13,7 @@ owner expects rather than driving a desktop program through a remote-control soc
 |---|---|---|
 | Job | **Main tuner**: what you listen to and scan, HF and CB included | **ADS-B** on 1090 MHz, and what lies above the V3's range |
 | Tuner chip | Rafael Micro R820T2 | Elonics E4000 |
-| Receives | 24 - 1766 MHz, and 500 kHz - 24 MHz by direct sampling | about 65 - 2300 MHz, with a gap around 1100 - 1250 MHz |
+| Receives | 24 - 1766 MHz, and 500 kHz - 24 MHz by direct sampling | about 65 - 2200 MHz, with a gap around 1100 - 1275 MHz |
 | Bias tee | yes, 4.5 V | no |
 | On screen | `V3`, or `V3 HF` in direct sampling | `XTR` |
 
@@ -57,7 +57,7 @@ the parts actually in hand:
   and to be powered through pogo pins. The display plus Pi is one rigid ~35 mm stack and
   the enclosure has to be designed around that stack, not around a loose Pi.
 - The software plan was a leftover from an HF-only upconverter design: tuning clamped to
-  0.5-30 MHz (the dongles cover 500 kHz to 2.3 GHz between them), a new TCP connection to Gqrx
+  0.5-30 MHz (the dongles cover 500 kHz to 2.2 GHz between them), a new TCP connection to Gqrx
   for every encoder click, and an encoder push that merely duplicated the STEP key.
 
 This version is **measure-first**: every dimension that depends on your physical parts is a
@@ -203,7 +203,9 @@ the ADS-B decoder, the ADS-B map, the ZIP code table, and every page of the UI i
 thousand random key presses, knob turns and taps. The real flowgraph code in
 `pisdr/radio/flowgraph.py` is exercised against a stand-in for GNU Radio
 (`tests/fakegr.py`) that records which blocks are connected to which; this checks the
-wiring and the order of operations, not the signal processing. The ADS-B tests use a shell
+wiring and the order of operations, not the signal processing. Where GNU Radio itself is
+installed the suite uses it instead, and one more test runs the spectrum blocks on a real
+flowgraph while the test keeps Python busy. The ADS-B tests use a shell
 script in place of `dump1090`; if a real one is installed (or `PISDR_TEST_DUMP1090` names
 one) a further test feeds it a synthetic recording and checks the decoded positions.
 Nothing here replaces trying a change on the Pi with the dongles attached:

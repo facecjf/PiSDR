@@ -49,7 +49,7 @@ def test_every_band_and_the_whole_range_has_a_tuner(state):
 @pytest.mark.parametrize("hz, label", (
     (HF, "V3 HF"), (1_000_000, "V3 HF"), (23_999_000, "V3 HF"), (24_000_000, "V3"),
     (27_185_000, "V3"), (SIX_M, "V3"), (FM, "V3"), (446_000_000, "V3"), (ADSB_HZ, "V3"), (GAP, "V3"),
-    (1_300_000_000, "V3"), (1_766_000_000, "V3"), (1_766_100_000, "XTR"), (HIGH, "XTR"), (2_300_000_000, "XTR"),
+    (1_300_000_000, "V3"), (1_766_000_000, "V3"), (1_766_100_000, "XTR"), (HIGH, "XTR"), (config.FREQ_MAX, "XTR"),
 ))
 def test_the_main_tuner_takes_what_it_can_and_the_xtr_the_rest(hz, label):
     assert PAIR.route(hz).label == label

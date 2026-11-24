@@ -199,7 +199,7 @@ def test_keypad_entry(window):
     for key in "99999":
         window.keypad_page.key(key)
     window.key_pressed(0)
-    assert window.state.vfo_hz == 7_074_000 and "Out of range" in window.toast.text()
+    assert window.state.vfo_hz == 7_074_000 and "Out of range (0.5 - 2200 MHz)" in window.toast.text()
     window.key_pressed(0)                              # nothing typed after CLR
     window.key_pressed(3)
     assert window.stack.currentIndex() == window.PAGE_MAIN

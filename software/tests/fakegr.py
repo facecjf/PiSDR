@@ -9,8 +9,9 @@ No samples flow. What the fake does do is the part bugs hide in:
   dongle was really released (bias tee, network mode);
 * every call on a block is recorded in ``block.calls``.
 
-Blocks subclassing ``gr.sync_block`` (FFT sink, CW envelope sink, WAV player...) are the
-project's own Python and run for real: call their ``work`` directly.
+Blocks subclassing ``gr.sync_block`` (CW envelope sink, WAV player...) are the project's
+own Python and run for real: call their ``work`` directly. The spectrum is read from a
+``probe_signal_vf``; a test puts the vector there that the FFT chain would have.
 """
 from __future__ import annotations
 
@@ -163,6 +164,17 @@ class _Probe(Block):
         return self.value
 
 
+class _VectorProbe(Block):
+    """probe_signal_vf: holds the newest vector. Tests set ``value``."""
+
+    def __init__(self, size: int, *args, **kwargs) -> None:
+        super().__init__(size, *args, **kwargs)
+        self.value = [0.0] * size
+
+    def level(self) -> list:
+        return self.value
+
+
 class _WavSink(Block):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -231,6 +243,8 @@ def install() -> None:
 
     blocks = _Module("gnuradio.blocks")
     blocks.wavfile_sink = _WavSink
+    blocks.probe_signal_vf = _VectorProbe
+    fft = _Module("gnuradio.fft")
     analog = _Module("gnuradio.analog")
     analog.probe_avg_mag_sqrd_c = _Probe
     audio = _Module("gnuradio.audio")
@@ -248,7 +262,7 @@ def install() -> None:
     osmosdr.IS_FAKE = True
 
     for name, module in (("gr", gr), ("blocks", blocks), ("analog", analog), ("audio", audio),
-                         ("digital", digital), ("filter", flt)):
+                         ("digital", digital), ("filter", flt), ("fft", fft)):
         setattr(root, name, module)
         sys.modules[f"gnuradio.{name}"] = module
     sys.modules["gnuradio"] = root

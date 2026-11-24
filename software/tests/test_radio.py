@@ -1,4 +1,4 @@
-"""Receiver back ends: view / retune maths, the FFT sink, and the GNU Radio wiring.
+"""Receiver back ends: view / retune maths, the spectrum tap, and the GNU Radio wiring.
 
 The wiring tests run against ``tests/fakegr.py`` (see its docstring): no samples flow, but
 every connection, lock and device open is checked.
@@ -14,11 +14,10 @@ import numpy as np
 import pytest
 
 import fakegr
-from conftest import needs_fake_gr, pump
+from conftest import needs_fake_gr, needs_real_gr, pump
 from pisdr import config
 from pisdr.radio import tuners
 from pisdr.radio.backend_sim import SimBackend
-from pisdr.radio.fft_sink import FftSink
 from pisdr.state import RadioState
 
 SPAN = float(config.SAMPLE_RATE)
@@ -146,53 +145,153 @@ def test_simulated_morse_reaches_the_cw_panel(sim, state, qapp):
     assert 15 <= state.cw_wpm <= 21
 
 
-# --------------------------------------------------------------------------- FFT sink
+# --------------------------------------------------------------------------- spectrum tap
 def tone(offset_hz: float, n: int) -> np.ndarray:
     t = np.arange(n) / config.SAMPLE_RATE
     return (0.5 * np.exp(2j * np.pi * offset_hz * t)).astype(np.complex64)
 
 
-def feed(sink: FftSink, samples: np.ndarray, chunk: int = 4096) -> None:
-    for i in range(0, len(samples), chunk):
-        sink._next_t = 0.0                      # ignore the frame-rate limit
-        sink.work([samples[i:i + chunk]], [])
+def show(tap, samples: np.ndarray) -> None:
+    """Leave in the tap's probe what GNU Radio's FFT chain would for these samples."""
+    frame = samples[-tap.size:] * np.blackman(tap.size).astype(np.float32)
+    tap.probe.value = (np.abs(np.fft.fftshift(np.fft.fft(frame))) ** 2).astype(np.float32).tolist()
 
 
-def test_fft_puts_a_tone_in_the_right_bin():
-    frames: list[np.ndarray] = []
-    sink = FftSink(config.FFT_SIZE, 20, frames.append)
-    feed(sink, tone(+300_000, 8192))
-    frame = frames[-1]
-    assert frame.shape == (config.FFT_SIZE,)
+def display(backend, samples: np.ndarray) -> None:
+    """Spectra of *samples* through the back end, fetched the way its poll timer does."""
+    show(backend.spectrum, samples * 0.5)       # (the first one after a change of view is dropped)
+    backend._poll_spectrum()
+    show(backend.spectrum, samples)
+    backend._poll_spectrum()
+
+
+def _tap(fps: int = 20):
+    from gnuradio import blocks, gr
+    from pisdr.radio.spectrum_tap import SpectrumTap
+    tb = gr.top_block("tap")
+    source = blocks.null_source(gr.sizeof_gr_complex)
+    return SpectrumTap(tb, source, config.FFT_SIZE, config.SAMPLE_RATE, config.SPECTRUM_ZOOMS, fps), tb, source
+
+
+@needs_fake_gr
+def test_spectrum_tap_puts_a_tone_in_the_right_bin():
+    tap, _tb, _source = _tap()
+    assert tap.read() is None, "nothing has been transformed yet"
+    show(tap, tone(-100_000, 4096))
+    assert tap.read() is None, "the first vector is partly from before the tap was switched on"
+    show(tap, tone(+300_000, 8192))
+    frame = tap.read()
+    assert frame.shape == (config.FFT_SIZE,) and frame.dtype == np.float32
     expected = config.FFT_SIZE / 2 + 300_000 / (SPAN / config.FFT_SIZE)
     assert abs(int(np.argmax(frame)) - expected) <= 1
     assert frame.max() == pytest.approx(20 * np.log10(0.5), abs=1.5)       # dBFS, window-corrected
     assert np.median(frame) < frame.max() - 60
+    assert tap.read() is None, "the same spectrum must not be drawn twice"
 
 
-def test_fft_accumulates_small_blocks():
-    frames: list[np.ndarray] = []
-    sink = FftSink(config.FFT_SIZE, 20, frames.append)
-    feed(sink, tone(-100_000, 4096), chunk=100)
-    assert frames and abs(int(np.argmax(frames[-1])) - (512 - 100_000 / 1875)) <= 1
+@needs_fake_gr
+def test_spectrum_tap_shows_the_window_asked_for_at_every_zoom():
+    tap, _tb, _source = _tap()
+    for port, zoom in list(enumerate(config.SPECTRUM_ZOOMS))[1:]:
+        size = config.FFT_SIZE * zoom
+        tone_bin = size / 2 - 150_000 / (SPAN / size)
+        start = int(tone_bin) - 100
+        tap.set_view(size, start)
+        assert tap.size == size and tap.selector.last("set_output_index") == (port,)
+        show(tap, tone(0, size))
+        assert tap.read() is None                       # dropped: the chain has just been switched to
+        show(tap, tone(-150_000, size))
+        frame = tap.read()
+        assert frame.shape == (config.FFT_SIZE,)
+        assert abs(int(np.argmax(frame)) - 100) <= 1, f"x{zoom}"
+        tap.set_view(size, start - 50)                  # the window slides: same chain, nothing dropped
+        show(tap, tone(-150_000, size) * 0.9)
+        assert abs(int(np.argmax(tap.read())) - 150) <= 1, f"x{zoom}"
+    tap.set_view(config.FFT_SIZE, 500)                  # x1 has only one window
+    show(tap, tone(0, 1024))
+    tap.read()
+    show(tap, tone(150_000, 1024))
+    assert abs(int(np.argmax(tap.read())) - (512 + 80)) <= 1
 
 
-def test_fft_frame_rate_is_limited_and_can_be_paused(clock, monkeypatch):
-    from pisdr.radio import fft_sink
-    monkeypatch.setattr(fft_sink, "time", clock)
-    frames: list[np.ndarray] = []
-    sink = FftSink(config.FFT_SIZE, 10, frames.append)
-    block = tone(0, 4096)
-    for _ in range(100):                        # 1 s of calls 10 ms apart
-        clock.advance(0.01)
-        sink.work([block], [])
-    assert 9 <= len(frames) <= 11
-    sink.set_enabled(False)
-    del frames[:]
-    for _ in range(100):
-        clock.advance(0.01)
-        assert sink.work([block], []) == len(block)        # still consumes: never stalls the radio
-    assert frames == []
+@needs_fake_gr
+def test_spectrum_tap_switched_off_drops_the_samples_and_shows_nothing_stale():
+    tap, _tb, _source = _tap()
+    show(tap, tone(0, 1024))
+    tap.read()
+    tap.set_enabled(False)
+    assert tap.selector.enabled is False, "the samples must be dropped before any FFT"
+    show(tap, tone(50_000, 1024))
+    assert tap.read() is None
+    tap.set_enabled(True)
+    assert tap.selector.enabled is True
+    assert tap.read() is None, "that spectrum is from before it was switched off"
+    show(tap, tone(60_000, 1024))
+    assert tap.read() is None                           # partly old samples
+    show(tap, tone(70_000, 1024))
+    assert tap.read() is not None
+
+
+@needs_fake_gr
+def test_spectrum_tap_thins_the_vectors_out_before_the_fft():
+    tap, tb, _source = _tap(fps=20)
+    by_size = {chain.size: chain for chain in tap._chains.values()}
+    assert sorted(by_size) == [config.FFT_SIZE * zoom for zoom in config.SPECTRUM_ZOOMS]
+    assert by_size[1024].keep.last("set_n") == (46,)    # 1875 vectors/s -> about 40 FFTs/s
+    assert by_size[65536].keep.last("set_n") == (1,)    # 29 vectors/s: all of them
+    tap.set_fps(5)
+    assert by_size[1024].keep.last("set_n") == (187,) and by_size[65536].keep.last("set_n") == (2,)
+    for chain in by_size.values():                      # selector -> vector -> keep -> FFT -> power -> probe
+        block, steps = tap.selector, 0
+        while block is not chain.probe:
+            (block,) = [b for e in tb.edges if e[0] is block and (block is not tap.selector or e[1] == chain.port)
+                        for b in [e[2]]]
+            steps += 1
+        assert steps == 5 and tb.sinks_of(chain.probe) == []
+
+
+@needs_real_gr
+def test_spectrum_tap_on_real_gnuradio_and_a_busy_gui_does_not_hold_the_samples_up():
+    """The reason the tap exists. A Python sink in its place let 60-80 % through here."""
+    import time
+    from gnuradio import analog, blocks, gr
+    from pisdr.radio.spectrum_tap import SpectrumTap
+    tb = gr.top_block("tap")
+    carrier = analog.sig_source_c(config.SAMPLE_RATE, analog.GR_COS_WAVE, 300_000, 0.5)
+    noise = analog.noise_source_c(analog.GR_GAUSSIAN, 1e-4)      # as from a dongle: no two spectra alike
+    source = blocks.add_cc()
+    throttle = blocks.throttle(gr.sizeof_gr_complex, config.SAMPLE_RATE)
+    tb.connect(carrier, (source, 0))
+    tb.connect(noise, (source, 1))
+    tb.connect(source, throttle)
+    tb.connect(throttle, blocks.null_sink(gr.sizeof_gr_complex))        # stands for the receiver
+    tap = SpectrumTap(tb, throttle, config.FFT_SIZE, config.SAMPLE_RATE, config.SPECTRUM_ZOOMS, 20)
+    tb.start()
+    try:
+        for zoom in (1, 8):
+            size = config.FFT_SIZE * zoom
+            tone_bin = size / 2 + 300_000 / (SPAN / size)
+            tap.set_view(size, int(tone_bin) - 200)
+            frames, end = [], time.monotonic() + 1.0
+            while time.monotonic() < end:
+                frame = tap.read()
+                if frame is not None:
+                    frames.append(frame)
+                time.sleep(0.05)
+            assert len(frames) >= 10, f"x{zoom}: {len(frames)} spectra in a second"
+            shown = tap._start + int(np.argmax(frames[-1]))
+            assert abs(shown - tone_bin) <= 1, f"x{zoom}"
+            assert frames[-1].max() == pytest.approx(20 * np.log10(0.5), abs=1.5)
+        before, start, busy = throttle.nitems_written(0), time.monotonic(), 0
+        while time.monotonic() - start < 2.0:           # a GUI thread that never lets go of Python
+            for i in range(20_000):
+                busy += i * i
+            tap.read()
+        passed = (throttle.nitems_written(0) - before) / (time.monotonic() - start) / config.SAMPLE_RATE
+        assert passed > 0.95, f"only {passed:.0%} of the samples got through"
+    finally:
+        tb.stop()
+        tb.wait()
 
 
 # --------------------------------------------------------------------------- GNU Radio wiring
@@ -309,12 +408,47 @@ def test_spectrum_shows_a_signal_at_the_frequency_it_is_on(radio, state, qapp):
     for zoom_index, zoom in enumerate(config.SPECTRUM_ZOOMS[:5]):          # up to a 16k FFT
         state.cycle_spectrum_zoom(zoom_index - config.SPECTRUM_ZOOMS.index(state.spectrum_zoom))
         size = config.FFT_SIZE * zoom
-        feed(radio.fft, tone(state.vfo_hz - radio.center_hz, 2 * size), chunk=size)
-        pump(qapp, 0.02)
+        assert radio.spectrum.size == size
+        display(radio, tone(state.vfo_hz - radio.center_hz, 2 * size))
         frame = frames[-1]
         bin_hz = radio.view_span_hz / config.FFT_SIZE
         shown_at = radio.view_center_hz - radio.view_span_hz / 2 + (np.argmax(frame) + 0.5) * bin_hz
         assert abs(shown_at - state.vfo_hz) <= bin_hz, f"x{zoom}: drawn {shown_at - state.vfo_hz:+.0f} Hz off"
+
+
+@needs_fake_gr
+def test_nothing_in_python_reads_the_sample_stream(radio, state):
+    """A Python block there needs the interpreter lock per chunk, and a busy GUI then starves the audio."""
+    from gnuradio import gr
+    fed_by_the_dongle = radio.tb.sinks_of(radio.src)
+    assert set(fed_by_the_dongle) == {radio.xlate, radio.spectrum.selector}
+    for block in (radio.xlate, radio.probe, radio.sel_in, *radio.tb.sinks_of(radio.spectrum.selector)):
+        assert not isinstance(block, gr.sync_block), block
+
+
+@needs_fake_gr
+def test_spectrum_is_fetched_by_a_timer_only_while_it_is_shown(radio, state, qapp):
+    frames: list[np.ndarray] = []
+    radio.spectrum_ready.connect(frames.append)
+    assert radio._spectrum_poll.isActive() and radio._spectrum_poll.interval() == 1000 // state.fft_fps
+    state.set_fft_fps(40)
+    assert radio._spectrum_poll.interval() == 25
+    display(radio, tone(0, 1024))
+    assert len(frames) >= 1
+    radio.set_spectrum_enabled(False)                   # another page, or the aircraft map
+    assert not radio._spectrum_poll.isActive() and radio.spectrum.selector.enabled is False
+    del frames[:]
+    display(radio, tone(10_000, 1024))
+    assert frames == []
+    state.set_bias_tee(True)                            # the graph is rebuilt meanwhile: still off
+    assert not radio._spectrum_poll.isActive() and radio.spectrum.selector.enabled is False
+    radio.set_spectrum_enabled(True)
+    assert radio._spectrum_poll.isActive() and radio._spectrum_poll.interval() == 25
+    display(radio, tone(20_000, 1024))
+    assert len(frames) >= 1
+    assert radio.start_network_mode() is not None or not radio._spectrum_poll.isActive()
+    radio.stop()
+    assert not radio._spectrum_poll.isActive()
 
 
 @needs_fake_gr

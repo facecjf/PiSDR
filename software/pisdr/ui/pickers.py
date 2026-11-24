@@ -293,7 +293,7 @@ class Keypad(Page):
             self.state.message.emit("Nothing entered")
             return
         if not config.FREQ_MIN <= value <= config.FREQ_MAX:
-            self.state.message.emit("Out of range (0.5 - 1766 MHz)")
+            self.state.message.emit(f"Out of range ({config.FREQ_MIN / 1e6:g} - {config.FREQ_MAX / 1e6:g} MHz)")
             return
         self.state.set_vfo(value)
         self.done.emit()
